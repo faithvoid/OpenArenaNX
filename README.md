@@ -5,7 +5,7 @@ A port of ioquake3 + OpenArena for the Nintendo Switch. Compatible with both con
 - Copy release files to /switch/ folder
 - Copy baseoa from a free copy of OpenArena, making sure not to replace any files.
 - Launch via HBMenu (by pressing R, not album!)
-- Start fragging
+- Start fragging!
 
 ## **Bugs**
 - Sleep mode causes the game and sometimes Horizon to crash. No idea what's causing this yet.
