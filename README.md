@@ -9,7 +9,13 @@ A port of ioquake3 + OpenArena for the Nintendo Switch. Compatible with both con
 
 ## **Bugs**
 - Sleep mode causes the game and sometimes Horizon to crash. No idea what's causing this yet.
+- A small amount of slowdown can happen during really hectic battles in larger maps. 
 
+Otherwise, the game works as you'd expect, and supports most, if not all mods that don't use dynamic libraries.
+
+## ** TODO **
+- Diagnose sleep issue.
+- Possibly move to vkQuake3 engine if/when DevKitPro + nouveau have Vulkan capability.
 
 ![Build](https://github.com/ioquake/ioq3/workflows/Build/badge.svg)
 
