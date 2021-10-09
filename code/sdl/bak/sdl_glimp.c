@@ -63,7 +63,7 @@ void (APIENTRYP qglMultiTexCoord2fARB) (GLenum target, GLfloat s, GLfloat t);
 void (APIENTRYP qglLockArraysEXT) (GLint first, GLsizei count);
 void (APIENTRYP qglUnlockArraysEXT) (void);
 
-#define GLE(ret, name, ...) name##proc * qgl##name;
+#define GLE(ret, name, ...) name##proc * qgl##name = NULL;
 QGL_1_1_PROCS;
 QGL_1_1_FIXED_FUNCTION_PROCS;
 QGL_DESKTOP_1_1_PROCS;
@@ -474,7 +474,6 @@ static int GLimp_SetMode(int mode, qboolean fullscreen, qboolean noborder, qbool
 		SDL_window = NULL;
 	}
 
-#ifndef __SWITCH__
 	if( fullscreen )
 	{
 		flags |= SDL_WINDOW_FULLSCREEN;
@@ -487,9 +486,6 @@ static int GLimp_SetMode(int mode, qboolean fullscreen, qboolean noborder, qbool
 
 		glConfig.isFullscreen = qfalse;
 	}
-#else
-	glConfig.isFullscreen = qfalse;
-#endif
 
 	colorBits = r_colorbits->value;
 	if ((!colorBits) || (colorBits >= 32))
@@ -583,12 +579,6 @@ static int GLimp_SetMode(int mode, qboolean fullscreen, qboolean noborder, qbool
 
 		SDL_GL_SetAttribute( SDL_GL_MULTISAMPLEBUFFERS, samples ? 1 : 0 );
 		SDL_GL_SetAttribute( SDL_GL_MULTISAMPLESAMPLES, samples );
-
-#ifdef __SWITCH__
-		SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
-		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
-		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-#endif
 
 		if(r_stereoEnabled->integer)
 		{

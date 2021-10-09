@@ -201,15 +201,13 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 //=================================================================== BSD ===
 
-#if defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__SWITCH__)
+#if defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
 
 #include <sys/types.h>
 #include <machine/endian.h>
 
-#ifndef __SWITCH__
 #ifndef __BSD__
   #define __BSD__
-#endif
 #endif
 
 #if defined(__FreeBSD__)
@@ -218,8 +216,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define OS_STRING "openbsd"
 #elif defined(__NetBSD__)
 #define OS_STRING "netbsd"
-#elif defined(__SWITCH__)
-#define OS_STRING "switch"
 #endif
 
 #define ID_INLINE inline

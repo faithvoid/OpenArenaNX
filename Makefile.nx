@@ -1,0 +1,466 @@
+#---------------------------------------------------------------------------------
+.SUFFIXES:
+#---------------------------------------------------------------------------------
+
+ifeq ($(strip $(DEVKITPRO)),)
+$(error "Please set DEVKITPRO in your environment. export DEVKITPRO=<path to>/devkitpro")
+endif
+
+TOPDIR ?= $(CURDIR)
+include $(DEVKITPRO)/libnx/switch_rules
+
+#---------------------------------------------------------------------------------
+# TARGET is the name of the output
+# BUILD is the directory where object files & intermediate files will be placed
+# SOURCES is a list of directories containing source code
+# DATA is a list of directories containing data files
+# INCLUDES is a list of directories containing header files
+# EXEFS_SRC is the optional input directory containing data copied into exefs, if anything this normally should only contain "main.npdm".
+# ROMFS is the directory containing data to be added to RomFS, relative to the Makefile (Optional)
+#
+# NO_ICON: if set to anything, do not use icon.
+# NO_NACP: if set to anything, no .nacp file is generated.
+# APP_TITLE is the name of the app stored in the .nacp file (Optional)
+# APP_AUTHOR is the author of the app stored in the .nacp file (Optional)
+# APP_VERSION is the version of the app stored in the .nacp file (Optional)
+# APP_TITLEID is the titleID of the app stored in the .nacp file (Optional)
+# ICON is the filename of the icon (.jpg), relative to the project folder.
+#   If not set, it attempts to use one of the following (in this order):
+#     - <Project name>.jpg
+#     - icon.jpg
+#     - <libnx folder>/default_icon.jpg
+#---------------------------------------------------------------------------------
+APP_TITLE	:=	OpenArenaNX
+APP_AUTHOR	:=	faithvoid
+APP_VERSION	:=	1.0
+
+TARGET		:=	OpenArenaNX
+BUILD		:=	build
+SOURCES		:=
+
+
+GL1_SOURCEFILES	:=\
+	code/renderergl1/tr_altivec.o \
+	code/renderergl1/tr_animation.o \
+	code/renderergl1/tr_backend.o \
+	code/renderergl1/tr_bsp.o \
+	code/renderergl1/tr_cmds.o \
+	code/renderergl1/tr_curve.o \
+	code/renderergl1/tr_flares.o \
+	code/renderergl1/tr_font.o \
+	code/renderergl1/tr_image.o \
+	code/renderercommon/tr_image_bmp.c \
+	code/renderercommon/tr_image_jpg.c \
+	code/renderercommon/tr_image_pcx.c \
+	code/renderercommon/tr_image_png.c \
+	code/renderercommon/tr_image_tga.c \
+	code/renderergl1/tr_init.o \
+	code/renderergl1/tr_light.o \
+	code/renderergl1/tr_main.o \
+	code/renderergl1/tr_marks.o \
+	code/renderergl1/tr_mesh.o \
+	code/renderergl1/tr_model.o \
+	code/renderergl1/tr_model_iqm.o \
+	code/renderercommon/tr_noise.c \
+	code/renderergl1/tr_scene.o \
+	code/renderergl1/tr_shade.o \
+	code/renderergl1/tr_shade_calc.o \
+	code/renderergl1/tr_shader.o \
+	code/renderergl1/tr_shadows.o \
+	code/renderergl1/tr_sky.o \
+	code/renderergl1/tr_surface.o \
+	code/renderergl1/tr_world.o
+
+# this one is more fancy, but only works if there's enough memory
+# ie you'll have to run ioquake3 as a regular app instead of an applet
+GL2_SOURCEFILES	:=\
+	code/renderergl2/tr_animation.o \
+	code/renderergl2/tr_backend.o \
+	code/renderergl2/tr_bsp.o \
+	code/renderergl2/tr_cmds.o \
+	code/renderergl2/tr_curve.o \
+	code/renderergl2/tr_dsa.o \
+	code/renderergl2/tr_extramath.o \
+	code/renderergl2/tr_extensions.o \
+	code/renderergl2/tr_fbo.o \
+	code/renderergl2/tr_flares.o \
+	code/renderergl2/tr_font.o \
+	code/renderergl2/tr_glsl.o \
+	code/renderergl2/tr_image.o \
+	code/renderercommon/tr_image_bmp.o \
+	code/renderercommon/tr_image_jpg.o \
+	code/renderercommon/tr_image_pcx.o \
+	code/renderercommon/tr_image_png.o \
+	code/renderercommon/tr_image_tga.o \
+	code/renderergl2/tr_image_dds.o \
+	code/renderergl2/tr_init.o \
+	code/renderergl2/tr_light.o \
+	code/renderergl2/tr_main.o \
+	code/renderergl2/tr_marks.o \
+	code/renderergl2/tr_mesh.o \
+	code/renderergl2/tr_model.o \
+	code/renderergl2/tr_model_iqm.o \
+	code/renderercommon/tr_noise.o \
+	code/renderergl2/tr_postprocess.o \
+	code/renderergl2/tr_scene.o \
+	code/renderergl2/tr_shade.o \
+	code/renderergl2/tr_shade_calc.o \
+	code/renderergl2/tr_shader.o \
+	code/renderergl2/tr_shadows.o \
+	code/renderergl2/tr_sky.o \
+	code/renderergl2/tr_surface.o \
+	code/renderergl2/tr_vbo.o \
+	code/renderergl2/tr_world.o \
+	code/glad/glad.c \
+	\
+	code/renderergl2/glsl/bokeh_fp.c \
+	code/renderergl2/glsl/bokeh_vp.c \
+	code/renderergl2/glsl/calclevels4x_fp.c \
+	code/renderergl2/glsl/calclevels4x_vp.c \
+	code/renderergl2/glsl/depthblur_fp.c \
+	code/renderergl2/glsl/depthblur_vp.c \
+	code/renderergl2/glsl/dlight_fp.c \
+	code/renderergl2/glsl/dlight_vp.c \
+	code/renderergl2/glsl/down4x_fp.c \
+	code/renderergl2/glsl/down4x_vp.c \
+	code/renderergl2/glsl/fogpass_fp.c \
+	code/renderergl2/glsl/fogpass_vp.c \
+	code/renderergl2/glsl/generic_fp.c \
+	code/renderergl2/glsl/generic_vp.c \
+	code/renderergl2/glsl/lightall_fp.c \
+	code/renderergl2/glsl/lightall_vp.c \
+	code/renderergl2/glsl/pshadow_fp.c \
+	code/renderergl2/glsl/pshadow_vp.c \
+	code/renderergl2/glsl/shadowfill_fp.c \
+	code/renderergl2/glsl/shadowfill_vp.c \
+	code/renderergl2/glsl/shadowmask_fp.c \
+	code/renderergl2/glsl/shadowmask_vp.c \
+	code/renderergl2/glsl/ssao_fp.c \
+	code/renderergl2/glsl/ssao_vp.c \
+	code/renderergl2/glsl/texturecolor_fp.c \
+	code/renderergl2/glsl/texturecolor_vp.c \
+	code/renderergl2/glsl/tonemap_fp.c \
+	code/renderergl2/glsl/tonemap_vp.c
+
+SOURCEFILES	:= \
+	code/client/cl_cgame.c \
+	code/client/cl_cin.c \
+	code/client/cl_console.c \
+	code/client/cl_input.c \
+	code/client/cl_keys.c \
+	code/client/cl_main.c \
+	code/client/cl_net_chan.c \
+	code/client/cl_parse.c \
+	code/client/cl_scrn.c \
+	code/client/cl_ui.c \
+	code/client/cl_avi.c \
+	\
+	code/qcommon/cm_load.c \
+	code/qcommon/cm_patch.c \
+	code/qcommon/cm_polylib.c \
+	code/qcommon/cm_test.c \
+	code/qcommon/cm_trace.c \
+	\
+	code/qcommon/cmd.c \
+	code/qcommon/common.c \
+	code/qcommon/cvar.c \
+	code/qcommon/files.c \
+	code/qcommon/md4.c \
+	code/qcommon/md5.c \
+	code/qcommon/msg.c \
+	code/qcommon/net_chan.c \
+	code/qcommon/net_ip.c \
+	code/qcommon/huffman.c \
+	\
+	code/client/snd_altivec.c \
+	code/client/snd_adpcm.c \
+	code/client/snd_dma.c \
+	code/client/snd_mem.c \
+	code/client/snd_mix.c \
+	code/client/snd_wavelet.c \
+	\
+	code/client/snd_main.c \
+	code/client/snd_codec.c \
+	code/client/snd_codec_wav.c \
+	code/client/snd_codec_ogg.c \
+	code/client/snd_codec_opus.c \
+	\
+	code/client/qal.c \
+	code/client/snd_openal.c \
+	\
+	code/client/cl_curl.c \
+	\
+	code/server/sv_bot.c \
+	code/server/sv_ccmds.c \
+	code/server/sv_client.c \
+	code/server/sv_game.c \
+	code/server/sv_init.c \
+	code/server/sv_main.c \
+	code/server/sv_net_chan.c \
+	code/server/sv_snapshot.c \
+	code/server/sv_world.c \
+	\
+	code/qcommon/q_math.c \
+	code/qcommon/q_shared.c \
+	\
+	code/qcommon/unzip.c \
+	code/qcommon/ioapi.c \
+	code/qcommon/puff.c \
+	code/qcommon/vm.c \
+	code/qcommon/vm_interpreted.c \
+	\
+	code/botlib/be_aas_bspq3.c \
+	code/botlib/be_aas_cluster.c \
+	code/botlib/be_aas_debug.c \
+	code/botlib/be_aas_entity.c \
+	code/botlib/be_aas_file.c \
+	code/botlib/be_aas_main.c \
+	code/botlib/be_aas_move.c \
+	code/botlib/be_aas_optimize.c \
+	code/botlib/be_aas_reach.c \
+	code/botlib/be_aas_route.c \
+	code/botlib/be_aas_routealt.c \
+	code/botlib/be_aas_sample.c \
+	code/botlib/be_ai_char.c \
+	code/botlib/be_ai_chat.c \
+	code/botlib/be_ai_gen.c \
+	code/botlib/be_ai_goal.c \
+	code/botlib/be_ai_move.c \
+	code/botlib/be_ai_weap.c \
+	code/botlib/be_ai_weight.c \
+	code/botlib/be_ea.c \
+	code/botlib/be_interface.c \
+	code/botlib/l_crc.c \
+	code/botlib/l_libvar.c \
+	code/botlib/l_log.c \
+	code/botlib/l_memory.c \
+	code/botlib/l_precomp.c \
+	code/botlib/l_script.c \
+	code/botlib/l_struct.c \
+	\
+	code/sdl/sdl_input_nx.c \
+	code/sdl/sdl_snd.c \
+	\
+	code/sys/con_log.c \
+	code/sys/sys_autoupdater.c \
+	\
+	code/sys/sys_main_nx.c \
+	code/sys/sys_nx.c \
+	code/sys/con_passive.c \
+	\
+	code/sdl/sdl_gamma.c \
+	code/sdl/sdl_glimp.c \
+	\
+	$(GL1_SOURCEFILES)
+
+GLSLFILES	:=\
+	code/renderergl2/glsl/bokeh_fp.glsl \
+	code/renderergl2/glsl/bokeh_vp.glsl \
+	code/renderergl2/glsl/calclevels4x_fp.glsl \
+	code/renderergl2/glsl/calclevels4x_vp.glsl \
+	code/renderergl2/glsl/depthblur_fp.glsl \
+	code/renderergl2/glsl/depthblur_vp.glsl \
+	code/renderergl2/glsl/dlight_fp.glsl \
+	code/renderergl2/glsl/dlight_vp.glsl \
+	code/renderergl2/glsl/down4x_fp.glsl \
+	code/renderergl2/glsl/down4x_vp.glsl \
+	code/renderergl2/glsl/fogpass_fp.glsl \
+	code/renderergl2/glsl/fogpass_vp.glsl \
+	code/renderergl2/glsl/generic_fp.glsl \
+	code/renderergl2/glsl/generic_vp.glsl \
+	code/renderergl2/glsl/lightall_fp.glsl \
+	code/renderergl2/glsl/lightall_vp.glsl \
+	code/renderergl2/glsl/pshadow_fp.glsl \
+	code/renderergl2/glsl/pshadow_vp.glsl \
+	code/renderergl2/glsl/shadowfill_fp.glsl \
+	code/renderergl2/glsl/shadowfill_vp.glsl \
+	code/renderergl2/glsl/shadowmask_fp.glsl \
+	code/renderergl2/glsl/shadowmask_vp.glsl \
+	code/renderergl2/glsl/ssao_fp.glsl \
+	code/renderergl2/glsl/ssao_vp.glsl \
+	code/renderergl2/glsl/texturecolor_fp.glsl \
+	code/renderergl2/glsl/texturecolor_vp.glsl \
+	code/renderergl2/glsl/tonemap_fp.glsl \
+	code/renderergl2/glsl/tonemap_vp.glsl
+
+define DO_REF_STR
+@echo "REF_STR $<"
+@rm -f $(TOPDIR)/$@
+@echo "const char *fallbackShader_$(notdir $(basename $<)) =" > $(TOPDIR)/$@
+@cat $(TOPDIR)/$< | sed -e 's/^/\"/;s/$$/\\n\"/' | tr -d '\r' >> $(TOPDIR)/$@
+@echo ";" >> $(TOPDIR)/$@
+endef
+
+VERSION		:=	3.00a
+DATA		:=	data
+INCLUDES	:=
+DEFINES		+=	-DOPENARENA -DSTANDALONE -DDEFAULT_BASEDIR=\"baseoa\" -DUSE_CURL -DUSE_CODEC_VORBIS -DUSE_CODEC_MP3 -DPRODUCT_VERSION=\"$(VERSION)\" -DARCH_STRING=\"aarch64\" \
+				-DBOTLIB -DNO_VM_COMPILED -DUSE_OPENAL
+EXEFS_SRC	:=	exefs_src
+#ROMFS	:=	romfs
+
+#---------------------------------------------------------------------------------
+# options for code generation
+#---------------------------------------------------------------------------------
+ARCH	:=	-march=armv8-a -mtune=cortex-a57 -mtp=soft -fPIE -mcpu=cortex-a57+crc+fp+simd
+
+CFLAGS	:=	-g -O3 -ffast-math -fno-strict-aliasing -fomit-frame-pointer -ffunction-sections \
+			$(ARCH) $(DEFINES)
+
+CFLAGS	+=	$(INCLUDE) -D__SWITCH__
+
+CFLAGS	+=	-I$(DEVKITPRO)/portlibs/switch/include/SDL2
+
+CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11
+
+ASFLAGS	:=	-g $(ARCH)
+LDFLAGS	=	-specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
+
+LIBS	:=	-lopenal -lSDL2main -lSDL2 -lEGL -lglapi -ldrm_nouveau -lglad \
+		-lvorbisfile -lvorbis -lmad -logg -ljpeg -lcurl -lmbedtls -lmbedx509 -lmbedcrypto -lz -lnx -lm -lstdc++
+
+#---------------------------------------------------------------------------------
+# list of directories containing libraries, this must be the top level containing
+# include and lib
+#---------------------------------------------------------------------------------
+LIBDIRS	:= $(PORTLIBS) $(LIBNX)
+
+
+#---------------------------------------------------------------------------------
+# no real need to edit anything past this point unless you need to add additional
+# rules for different file extensions
+#---------------------------------------------------------------------------------
+ifneq ($(BUILD),$(notdir $(CURDIR)))
+#---------------------------------------------------------------------------------
+
+export OUTPUT	:=	$(CURDIR)/$(TARGET)
+export TOPDIR	:=	$(CURDIR)
+
+export VPATH	:=	$(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
+			$(foreach sf,$(SOURCEFILES),$(CURDIR)/$(dir $(sf))) \
+			$(foreach dir,$(DATA),$(CURDIR)/$(dir))
+
+export DEPSDIR	:=	$(CURDIR)/$(BUILD)
+
+CFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c))) $(foreach f,$(SOURCEFILES),$(notdir $(f)))
+CPPFILES	:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
+SFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
+BINFILES	:=	$(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*)))
+
+#---------------------------------------------------------------------------------
+# use CXX for linking C++ projects, CC for standard C
+#---------------------------------------------------------------------------------
+ifeq ($(strip $(CPPFILES)),)
+#---------------------------------------------------------------------------------
+	export LD	:=	$(CC)
+#---------------------------------------------------------------------------------
+else
+#---------------------------------------------------------------------------------
+	export LD	:=	$(CXX)
+#---------------------------------------------------------------------------------
+endif
+#---------------------------------------------------------------------------------
+
+export OFILES_BIN	:=	$(addsuffix .o,$(BINFILES))
+export OFILES_SRC	:=	$(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o)
+export OFILES 	:=	$(OFILES_BIN) $(OFILES_SRC)
+export HFILES_BIN	:=	$(addsuffix .h,$(subst .,_,$(BINFILES)))
+
+export INCLUDE	:=	$(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
+			$(foreach dir,$(LIBDIRS),-I$(dir)/include) \
+			-I$(CURDIR)/$(BUILD)
+
+export LIBPATHS	:=	$(foreach dir,$(LIBDIRS),-L$(dir)/lib)
+
+export BUILD_EXEFS_SRC := $(TOPDIR)/$(EXEFS_SRC)
+
+ifeq ($(strip $(ICON)),)
+	icons := $(wildcard *.jpg)
+	ifneq (,$(findstring $(TARGET).jpg,$(icons)))
+		export APP_ICON := $(TOPDIR)/$(TARGET).jpg
+	else
+		ifneq (,$(findstring icon.jpg,$(icons)))
+			export APP_ICON := $(TOPDIR)/icon.jpg
+		endif
+	endif
+else
+	export APP_ICON := $(TOPDIR)/$(ICON)
+endif
+
+ifeq ($(strip $(NO_ICON)),)
+	export NROFLAGS += --icon=$(APP_ICON)
+endif
+
+ifeq ($(strip $(NO_NACP)),)
+	export NROFLAGS += --nacp=$(CURDIR)/$(TARGET).nacp
+endif
+
+ifneq ($(APP_TITLEID),)
+	export NACPFLAGS += --titleid=$(APP_TITLEID)
+endif
+
+ifneq ($(ROMFS),)
+	export NROFLAGS += --romfsdir=$(CURDIR)/$(ROMFS)
+endif
+
+.PHONY: $(BUILD) clean all
+
+#---------------------------------------------------------------------------------
+all: $(BUILD)
+
+$(BUILD):
+	@[ -d $@ ] || mkdir -p $@
+	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile.nx
+
+#---------------------------------------------------------------------------------
+clean:
+	@echo clean ...
+	@rm -fr $(BUILD) $(TARGET).pfs0 $(TARGET).nso $(TARGET).nro $(TARGET).nacp $(TARGET).elf
+
+
+#---------------------------------------------------------------------------------
+else
+.PHONY:	all shaders
+
+DEPENDS	:=	$(OFILES:.o=.d)
+
+#---------------------------------------------------------------------------------
+# main targets
+#---------------------------------------------------------------------------------
+#all	:	shaders $(OUTPUT).pfs0 $(OUTPUT).nro # uncomment this if building ref_gl2 and comment the line below
+all	:	$(OUTPUT).pfs0 $(OUTPUT).nro
+
+$(OUTPUT).pfs0	:	$(OUTPUT).nso
+
+$(OUTPUT).nso	:	$(OUTPUT).elf
+
+ifeq ($(strip $(NO_NACP)),)
+$(OUTPUT).nro	:	$(OUTPUT).elf $(OUTPUT).nacp
+else
+$(OUTPUT).nro	:	$(OUTPUT).elf
+endif
+
+$(OUTPUT).elf	:	$(OFILES)
+
+$(OFILES_SRC)	: $(HFILES_BIN)
+
+shaders: $(GLSLFILES:.glsl=.c)
+
+code/renderergl2/glsl/%.c: code/renderergl2/glsl/%.glsl
+	$(DO_REF_STR)
+
+%.glsl: ;
+
+#---------------------------------------------------------------------------------
+# you need a rule like this for each extension you use as binary data
+#---------------------------------------------------------------------------------
+%.bin.o	%_bin.h :	%.bin
+#---------------------------------------------------------------------------------
+	@echo $(notdir $<)
+	@$(bin2o)
+
+-include $(DEPENDS)
+
+#---------------------------------------------------------------------------------------
+endif
+#---------------------------------------------------------------------------------------

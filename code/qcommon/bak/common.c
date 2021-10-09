@@ -298,11 +298,6 @@ void QDECL Com_Error( int code, const char *fmt, ... ) {
 	Q_vsnprintf (com_errorMessage, sizeof(com_errorMessage),fmt,argptr);
 	va_end (argptr);
 
-#ifdef __SWITCH__
-	// shit out the error immediately just in case
-	fprintf(stderr, "ERROR: %s\n", com_errorMessage);
-#endif
-
 	if (code != ERR_DISCONNECT && code != ERR_NEED_CD)
 		Cvar_Set("com_errorMessage", com_errorMessage);
 
@@ -2531,7 +2526,7 @@ static void Com_WriteCDKey( const char *filename, const char *ikey ) {
 	fileHandle_t	f;
 	char			fbuffer[MAX_OSPATH];
 	char			key[17];
-#if !defined(_WIN32) && !defined(__SWITCH__)
+#ifndef _WIN32
 	mode_t			savedumask;
 #endif
 
@@ -2545,7 +2540,7 @@ static void Com_WriteCDKey( const char *filename, const char *ikey ) {
 		return;
 	}
 
-#if !defined(_WIN32) && !defined(__SWITCH__)
+#ifndef _WIN32
 	savedumask = umask(0077);
 #endif
 	f = FS_SV_FOpenFileWrite( fbuffer );
@@ -2562,7 +2557,7 @@ static void Com_WriteCDKey( const char *filename, const char *ikey ) {
 
 	FS_FCloseFile( f );
 out:
-#if !defined(_WIN32) && !defined(__SWITCH__)
+#ifndef _WIN32
 	umask(savedumask);
 #else
 	;
