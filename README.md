@@ -1,3 +1,12 @@
+**OpenArenaNX**
+A port of ioquake3 + OpenArena for the Nintendo Switch.
+
+***Installation***
+- Copy release files to /switch/ folder
+- Copy baseoa from a free copy of OpenArena, making sure not to replace any files.
+- Launch via HBMenu (by pressing R, not album!)
+
+
 ![Build](https://github.com/ioquake/ioq3/workflows/Build/badge.svg)
 
                    ,---------------------------------------.
