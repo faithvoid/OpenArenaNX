@@ -1,10 +1,13 @@
-**OpenArenaNX**
+## **OpenArenaNX**
 A port of ioquake3 + OpenArena for the Nintendo Switch.
 
-***Installation***
+## **Installation**
 - Copy release files to /switch/ folder
 - Copy baseoa from a free copy of OpenArena, making sure not to replace any files.
 - Launch via HBMenu (by pressing R, not album!)
+
+## **Bugs**
+- Sleep mode causes the game and sometimes Horizon to crash. No idea what's causing this yet.
 
 
 ![Build](https://github.com/ioquake/ioq3/workflows/Build/badge.svg)
