@@ -17,11 +17,11 @@ Otherwise, the game works as you'd expect, and supports most, if not all mods th
 ## ***"Why? Doesn't ioquake3-nx already exist?"***
 It does, and this project uses some of it's code! But the releases requires a copy of baseq3 (which is non-free) to launch, so this fork tweaks a few variables to launch OpenArena (a free clone) as a standalone game.
 
-## ** TODO **
+## **TODO**
 - Diagnose sleep issue.
 - Possibly move to vkQuake3 engine if/when DevKitPro + nouveau supports Vulkan.
 
-## ** Credits **
+## **Credits**
 - ioquake3 team (engine)
 - OpenArena team (game assets)
 - DevKitPro team (compilation tools)
