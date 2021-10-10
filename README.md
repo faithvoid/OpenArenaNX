@@ -5,7 +5,7 @@ A port of ioquake3 + OpenArena for the Nintendo Switch. Compatible with both con
 
 
 ## **Installation**
-- Latest full build including game files can be downloaded and copied from <a href="https://accela.design/downloads/OpenArenaNX.zip">here!<br/></a>
+- Latest full build including game files can be downloaded and copied from <a href="https://accela.design/downloads/switch-homebrew/OpenArenaNX.zip">here!<br/></a>
 - Copy release files to /switch/ folder
 - If providing your own baseoa files, copy baseoa from a copy of OpenArena, making sure not to replace any files.
 - Launch via HBMenu (by pressing R, not album!)
