@@ -1,21 +1,37 @@
 ## **OpenArenaNX**
 A port of ioquake3 + OpenArena for the Nintendo Switch. Compatible with both controllers and keyboard + mouse controls! Based off of ioquake3 1.36 and OpenArena 3.00a.
 
+![20211009_100312](https://user-images.githubusercontent.com/56975081/136676741-83c50a67-0df4-4e8f-b294-ba6eb94c709f.jpg)
+
+
 ## **Installation**
+- Latest full build including game files can be downloaded and copied from <a href="https://accela.design/downloads/OpenArenaNX.zip">here!<br/></a>
 - Copy release files to /switch/ folder
-- Copy baseoa from a free copy of OpenArena, making sure not to replace any files.
+- If providing your own baseoa files, copy baseoa from a copy of OpenArena, making sure not to replace any files.
 - Launch via HBMenu (by pressing R, not album!)
-- Start fragging
+- Start fragging!
 
 ## **Bugs**
 - Sleep mode causes the game and sometimes Horizon to crash. No idea what's causing this yet.
 - A small amount of slowdown can happen during really hectic battles in larger maps. 
+- If you switch between controller and keyboard + mouse input mid-match, your camera may start spinning wildly. Just press ESC/+, click with your desired input, then press ESC/+ again and it should resolve it. This might not even be a real bug and might just be my wireless keyboard, but I'm putting it here just to be safe.
 
 Otherwise, the game works as you'd expect, and supports most, if not all mods that don't use dynamic libraries.
 
-## ** TODO **
+## ***"Why? Doesn't ioquake3-nx already exist?"***
+It does, and this project uses some of it's code! But the releases requires a copy of baseq3 (which is non-free) to launch, so this fork tweaks a few variables to launch OpenArena (a free clone) as a standalone game.
+
+## **TODO**
 - Diagnose sleep issue.
-- Possibly move to vkQuake3 engine if/when DevKitPro + nouveau have Vulkan capability.
+- Possibly move to vkQuake3 engine if/when DevKitPro + nouveau supports Vulkan.
+- Implement splitscreen multiplayer (probably via switching to the Spearmint engine)
+
+## **Credits**
+- ioquake3 team (engine)
+- OpenArena team (game assets)
+- DevKitPro team (compilation tools)
+- fgsfdsfgs (original ioquake3-nx port)
+- and many others!
 
 ![Build](https://github.com/ioquake/ioq3/workflows/Build/badge.svg)
 
