@@ -1,6 +1,9 @@
 ## **OpenArenaNX**
 A port of ioquake3 + OpenArena for the Nintendo Switch. Compatible with both controllers and keyboard + mouse controls! Based off of ioquake3 1.36 and OpenArena 3.00a.
 
+![20211009_100312](https://user-images.githubusercontent.com/56975081/136676741-83c50a67-0df4-4e8f-b294-ba6eb94c709f.jpg)
+
+
 ## **Installation**
 - Copy release files to /switch/ folder
 - Copy baseoa from a free copy of OpenArena, making sure not to replace any files.
