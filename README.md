@@ -24,6 +24,7 @@ It does, and this project uses some of it's code! But the releases requires a co
 ## **TODO**
 - Diagnose sleep issue.
 - Possibly move to vkQuake3 engine if/when DevKitPro + nouveau supports Vulkan.
+- Implement splitscreen multiplayer (probably via switching to the Spearmint engine)
 
 ## **Credits**
 - ioquake3 team (engine)
