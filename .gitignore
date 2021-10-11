@@ -45,3 +45,6 @@ Q3ArenaNX.nacp
 Q3ArenaNX.nro
 Q3ArenaNX.nso
 Q3ArenaNX.pfs0
+code/qcommon/bak/net_ip.c
+code/sdl/bak/sdl_glimp.c
+OpenArenaNX.nacp
