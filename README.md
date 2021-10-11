@@ -1,6 +1,9 @@
 ## **Q3ArenaNX**
 A port of ioquake3 for the Nintendo Switch. Compatible with both controllers and keyboard + mouse controls! Based off of ioquake3 1.36.
 
+### ***"Why? Doesn't ioquake3-nx already exist?"***
+It does, and this project uses some of it's code! But it's slightly out of date, so this branch exists to keep it updated somewhat, with the hopeful inclusion of splitscreen multiplayer in the near future.
+
 ## **Installation**
 - Latest full build including demo game files can be downloaded and copied from <a href="https://accela.design/downloads/switch-homebrew/Q3ArenaNXDemo.zip">here!<br/></a>
 - Copy release files to /switch/ folder
@@ -15,12 +18,25 @@ A port of ioquake3 for the Nintendo Switch. Compatible with both controllers and
 
 Otherwise, the game works as you'd expect, and supports most, if not all mods that don't use dynamic libraries.
 
-## ***"Why? Doesn't ioquake3-nx already exist?"***
-It does, and this project uses some of it's code! But it's slightly out of date, so this branch exists to keep it updated somewhat.
+## **Controls**
+- Left Trigger - Jump
+- Right Trigger - Attack
+- Left Bumper - Crouch (or brings up keyboard when text fields are selected)
+- Right Bumper - Next Weapon
+- X - Use
+- Y - Taunt / Toggle Console (menu)
+- A - Select
+- D-Pad Left + Right - Weapon Select
+- D-Pad Up - Zoom
+- D-Pad Down - Toggle Console (in-game)
+- Minus - Scores
+- Plus - Menu
+- Left Stick In - Vote No
+- Right Stick In - Vote Yes
 
 ## **TODO**
 - Diagnose sleep issue.
-- Implement splitscreen multiplayer (probably via switching to the Spearmint engine)
+- Implement splitscreen multiplayer (probably via moving code from here to the Spearmint engine branch)
 
 ## **Credits**
 - ioquake3 team (engine)
