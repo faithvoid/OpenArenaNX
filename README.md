@@ -1,13 +1,9 @@
-## **OpenArenaNX**
-A port of ioquake3 + OpenArena for the Nintendo Switch. Compatible with both controllers and keyboard + mouse controls! Based off of ioquake3 1.36 and OpenArena 3.00a.
-
-![20211009_100312](https://user-images.githubusercontent.com/56975081/136676741-83c50a67-0df4-4e8f-b294-ba6eb94c709f.jpg)
-
+## **Q3ArenaNX**
+A port of ioquake3 for the Nintendo Switch. Compatible with both controllers and keyboard + mouse controls! Based off of ioquake3 1.36.
 
 ## **Installation**
-- Latest full build including game files can be downloaded and copied from <a href="https://accela.design/downloads/switch-homebrew/OpenArenaNX.zip">here!<br/></a>
 - Copy release files to /switch/ folder
-- If providing your own baseoa files, copy baseoa from a copy of OpenArena, making sure not to replace any files.
+- Copy baseq3 files from an existing installation of Quake III Arena into the same folder as the .nro, making sure not to replace any files.
 - Launch via HBMenu (by pressing R, not album!)
 - Start fragging!
 
@@ -19,16 +15,15 @@ A port of ioquake3 + OpenArena for the Nintendo Switch. Compatible with both con
 Otherwise, the game works as you'd expect, and supports most, if not all mods that don't use dynamic libraries.
 
 ## ***"Why? Doesn't ioquake3-nx already exist?"***
-It does, and this project uses some of it's code! But the releases requires a copy of baseq3 (which is non-free) to launch, so this fork tweaks a few variables to launch OpenArena (a free clone) as a standalone game.
+It does, and this project uses some of it's code! But it's slightly out of date, so this branch exists to keep it updated somewhat.
 
 ## **TODO**
 - Diagnose sleep issue.
-- Possibly move to vkQuake3 engine if/when DevKitPro + nouveau supports Vulkan.
 - Implement splitscreen multiplayer (probably via switching to the Spearmint engine)
 
 ## **Credits**
 - ioquake3 team (engine)
-- OpenArena team (game assets)
+- id software (game)
 - DevKitPro team (compilation tools)
 - fgsfdsfgs (original ioquake3-nx port)
 - and many others!
