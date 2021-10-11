@@ -2,21 +2,29 @@
 ===========================================================================
 Copyright (C) 2007-2009 Robert Beckebans <trebor_7@users.sourceforge.net>
 
-This file is part of XreaL source code.
+This file is part of Spearmint Source Code.
 
-XreaL source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-XreaL source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with XreaL source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 // tr_vbo.c
@@ -420,7 +428,7 @@ void R_InitVaos(void)
 	int             vertexesSize, indexesSize;
 	int             offset;
 
-	ri.Printf(PRINT_ALL, "------- R_InitVaos -------\n");
+	ri.Printf(PRINT_DEVELOPER, "------- R_InitVaos -------\n");
 
 	tr.numVaos = 0;
 
@@ -514,7 +522,7 @@ void R_ShutdownVaos(void)
 	int             i;
 	vao_t          *vao;
 
-	ri.Printf(PRINT_ALL, "------- R_ShutdownVaos -------\n");
+	ri.Printf(PRINT_DEVELOPER, "------- R_ShutdownVaos -------\n");
 
 	R_BindNullVao();
 

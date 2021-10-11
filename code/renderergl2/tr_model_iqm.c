@@ -4,21 +4,29 @@ Copyright (C) 2011 Thilo Schulz <thilo@tjps.eu>
 Copyright (C) 2011 Matthias Bentrup <matthias.bentrup@googlemail.com>
 Copyright (C) 2011-2019 Zack Middleton <zturtleman@gmail.com>
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 
@@ -159,6 +167,21 @@ static vec_t QuatNormalize2( const quat_t v, quat_t out) {
 	}
 
 	return length;
+}
+
+static iqmData_t *R_GetIQMModelDataByHandle( qhandle_t hModel, iqmData_t *defaultData ) {
+	model_t *mod;
+
+	if ( !hModel )
+		return defaultData;
+
+	mod = R_GetModelByHandle( hModel );
+
+	if ( mod->type != MOD_IQM ) {
+		return defaultData;
+	}
+
+	return mod->modelData;
 }
 
 /*
@@ -475,8 +498,8 @@ qboolean R_LoadIQM( model_t *mod, void *buffer, int filesize, const char *mod_na
 		}
 	}
 
-	if( header->num_poses != header->num_joints && header->num_poses != 0 ) {
-		ri.Printf( PRINT_WARNING, "R_LoadIQM: %s has %d poses and %d joints, must have the same number or 0 poses\n",
+	if( header->num_poses != header->num_joints && header->num_poses != 0 && header->num_joints != 0 ) {
+		ri.Printf( PRINT_WARNING, "R_LoadIQM: %s has %d poses and %d joints, must have the same number or 0 poses or 0 joints\n",
 			  mod_name, header->num_poses, header->num_joints );
 		return qfalse;
 	}
@@ -706,7 +729,7 @@ qboolean R_LoadIQM( model_t *mod, void *buffer, int filesize, const char *mod_na
 			surface->surfaceType = SF_IQM;
 			Q_strncpyz(surface->name, str + mesh->name, sizeof (surface->name));
 			Q_strlwr(surface->name); // lowercase the surface name so skin compares are faster
-			surface->shader = R_FindShader( str + mesh->material, LIGHTMAP_NONE, qtrue );
+			surface->shader = R_FindShader( str + mesh->material, LIGHTMAP_NONE, MIP_RAW_IMAGE );
 			if( surface->shader->defaultShader )
 				surface->shader = tr.defaultShader;
 			surface->data = iqmData;
@@ -1132,24 +1155,28 @@ qboolean R_LoadIQM( model_t *mod, void *buffer, int filesize, const char *mod_na
 R_CullIQM
 =============
 */
-static int R_CullIQM( iqmData_t *data, trRefEntity_t *ent ) {
+static int R_CullIQM( iqmData_t *skeleton, iqmData_t *oldSkeleton, trRefEntity_t *ent ) {
 	vec3_t		bounds[2];
 	vec_t		*oldBounds, *newBounds;
 	int		i;
 
-	if (!data->bounds) {
+	if (skeleton->bounds && oldSkeleton->bounds) {
+		// compute bounds pointers
+		oldBounds = oldSkeleton->bounds + 6*ent->e.oldframe;
+		newBounds = skeleton->bounds + 6*ent->e.frame;
+
+		// calculate a bounding box in the current coordinate system
+		for (i = 0 ; i < 3 ; i++) {
+			bounds[0][i] = oldBounds[i] < newBounds[i] ? oldBounds[i] : newBounds[i];
+			bounds[1][i] = oldBounds[i+3] > newBounds[i+3] ? oldBounds[i+3] : newBounds[i+3];
+		}
+	} else if (skeleton->bounds) {
+		newBounds = skeleton->bounds + 6*ent->e.frame;
+		VectorCopy( newBounds, bounds[0] );
+		VectorCopy( (newBounds+3), bounds[1] );
+	} else {
 		tr.pc.c_box_cull_md3_clip++;
 		return CULL_CLIP;
-	}
-
-	// compute bounds pointers
-	oldBounds = data->bounds + 6*ent->e.oldframe;
-	newBounds = data->bounds + 6*ent->e.frame;
-
-	// calculate a bounding box in the current coordinate system
-	for (i = 0 ; i < 3 ; i++) {
-		bounds[0][i] = oldBounds[i] < newBounds[i] ? oldBounds[i] : newBounds[i];
-		bounds[1][i] = oldBounds[i+3] > newBounds[i+3] ? oldBounds[i+3] : newBounds[i+3];
 	}
 
 	switch ( R_CullLocalBox( bounds ) )
@@ -1173,9 +1200,7 @@ R_ComputeIQMFogNum
 
 =================
 */
-int R_ComputeIQMFogNum( iqmData_t *data, trRefEntity_t *ent ) {
-	int			i, j;
-	fog_t			*fog;
+int R_ComputeIQMFogNum( iqmData_t *skeleton, trRefEntity_t *ent ) {
 	const vec_t		*bounds;
 	const vec_t		defaultBounds[6] = { -8, -8, -8, 8, 8, 8 };
 	vec3_t			diag, center;
@@ -1187,8 +1212,8 @@ int R_ComputeIQMFogNum( iqmData_t *data, trRefEntity_t *ent ) {
 	}
 
 	// FIXME: non-normalized axis issues
-	if (data->bounds) {
-		bounds = data->bounds + 6*ent->e.frame;
+	if (skeleton->bounds) {
+		bounds = skeleton->bounds + 6*ent->e.frame;
 	} else {
 		bounds = defaultBounds;
 	}
@@ -1197,22 +1222,7 @@ int R_ComputeIQMFogNum( iqmData_t *data, trRefEntity_t *ent ) {
 	VectorAdd( ent->e.origin, center, localOrigin );
 	radius = 0.5f * VectorLength( diag );
 
-	for ( i = 1 ; i < tr.world->numfogs ; i++ ) {
-		fog = &tr.world->fogs[i];
-		for ( j = 0 ; j < 3 ; j++ ) {
-			if ( localOrigin[j] - radius >= fog->bounds[1][j] ) {
-				break;
-			}
-			if ( localOrigin[j] + radius <= fog->bounds[0][j] ) {
-				break;
-			}
-		}
-		if ( j == 3 ) {
-			return i;
-		}
-	}
-
-	return 0;
+	return R_PointFogNum( &tr.refdef, localOrigin, radius );
 }
 
 /*
@@ -1224,26 +1234,35 @@ Add all surfaces of this model
 */
 void R_AddIQMSurfaces( trRefEntity_t *ent ) {
 	iqmData_t		*data;
+	iqmData_t		*skeleton;
+	iqmData_t		*oldSkeleton;
 	srfIQModel_t		*surface;
 	void			*drawSurf;
-	int			i, j;
+	int			i;
 	qboolean		personalModel;
 	int			cull;
 	int			fogNum;
 	int         cubemapIndex;
 	shader_t		*shader;
-	skin_t			*skin;
 
 	data = tr.currentModel->modelData;
 	surface = data->surfaces;
 
-	// don't add third_person objects if not in a portal
-	personalModel = (ent->e.renderfx & RF_THIRD_PERSON) && !(tr.viewParms.isPortal
+	if ( !data->num_surfaces || !data->num_triangles || !data->num_vertexes ) {
+		ri.Printf( PRINT_WARNING, "WARNING: Tried to render IQM '%s' with no surfaces\n", tr.currentModel->name );
+		return;
+	}
+
+	skeleton = R_GetIQMModelDataByHandle( ent->e.frameModel, data );
+	oldSkeleton = R_GetIQMModelDataByHandle( ent->e.oldframeModel, data );
+
+	// don't add mirror only objects if not in a mirror/portal
+	personalModel = (ent->e.renderfx & RF_ONLY_MIRROR) && !(tr.viewParms.isPortal
 	                 || (tr.viewParms.flags & (VPF_SHADOWMAP | VPF_DEPTHSHADOW)));
 
 	if ( ent->e.renderfx & RF_WRAP_FRAMES ) {
-		ent->e.frame %= data->num_frames;
-		ent->e.oldframe %= data->num_frames;
+		ent->e.frame %= skeleton->num_frames;
+		ent->e.oldframe %= oldSkeleton->num_frames;
 	}
 
 	//
@@ -1252,9 +1271,9 @@ void R_AddIQMSurfaces( trRefEntity_t *ent ) {
 	// when the surfaces are rendered, they don't need to be
 	// range checked again.
 	//
-	if ( (ent->e.frame >= data->num_frames) 
+	if ( (ent->e.frame >= skeleton->num_frames) 
 	     || (ent->e.frame < 0)
-	     || (ent->e.oldframe >= data->num_frames)
+	     || (ent->e.oldframe >= oldSkeleton->num_frames)
 	     || (ent->e.oldframe < 0) ) {
 		ri.Printf( PRINT_DEVELOPER, "R_AddIQMSurfaces: no such frame %d to %d for '%s'\n",
 			   ent->e.oldframe, ent->e.frame,
@@ -1267,7 +1286,7 @@ void R_AddIQMSurfaces( trRefEntity_t *ent ) {
 	// cull the entire model if merged bounding box of both frames
 	// is outside the view frustum.
 	//
-	cull = R_CullIQM ( data, ent );
+	cull = R_CullIQM ( skeleton, oldSkeleton, ent );
 	if ( cull == CULL_OUT ) {
 		return;
 	}
@@ -1282,25 +1301,16 @@ void R_AddIQMSurfaces( trRefEntity_t *ent ) {
 	//
 	// see if we are in a fog volume
 	//
-	fogNum = R_ComputeIQMFogNum( data, ent );
+	fogNum = R_ComputeIQMFogNum( skeleton, ent );
 
 	cubemapIndex = R_CubemapForPoint(ent->e.origin);
 
 	for ( i = 0 ; i < data->num_surfaces ; i++ ) {
-		if(ent->e.customShader)
-			shader = R_GetShaderByHandle( ent->e.customShader );
-		else if(ent->e.customSkin > 0 && ent->e.customSkin < tr.numSkins)
-		{
-			skin = R_GetSkinByHandle(ent->e.customSkin);
-			shader = tr.defaultShader;
-
-			for(j = 0; j < skin->numSurfaces; j++)
-			{
-				if (!strcmp(skin->surfaces[j].name, surface->name))
-				{
-					shader = skin->surfaces[j].shader;
-					break;
-				}
+		if ( ent->e.customShader || ent->e.customSkin ) {
+			shader = R_CustomSurfaceShader( surface->name, ent->e.customShader, ent->e.customSkin );
+			if (shader == tr.nodrawShader) {
+				surface++;
+				continue;
 			}
 		} else {
 			shader = surface->shader;
@@ -1332,7 +1342,7 @@ void R_AddIQMSurfaces( trRefEntity_t *ent ) {
 		}
 
 		if( !personalModel ) {
-			R_AddDrawSurf( drawSurf, shader, fogNum, 0, 0, cubemapIndex );
+			R_AddEntDrawSurf( ent, drawSurf, shader, fogNum, 0, 0, 0, cubemapIndex );
 		}
 
 		surface++;
@@ -1340,7 +1350,7 @@ void R_AddIQMSurfaces( trRefEntity_t *ent ) {
 }
 
 
-static void ComputePoseMats( iqmData_t *data, int frame, int oldframe,
+static void ComputePoseMats( iqmData_t *data, iqmData_t *skeleton, iqmData_t *oldSkeleton, int frame, int oldframe,
 			      float backlerp, float *poseMats ) {
 	iqmTransform_t relativeJoints[IQM_MAX_JOINTS];
 	iqmTransform_t *relativeJoint;
@@ -1354,18 +1364,18 @@ static void ComputePoseMats( iqmData_t *data, int frame, int oldframe,
 	relativeJoint = relativeJoints;
 
 	// copy or lerp animation frame pose
-	if ( oldframe == frame ) {
-		pose = &data->poses[frame * data->num_poses];
-		for ( i = 0; i < data->num_poses; i++, pose++, relativeJoint++ ) {
+	if ( oldframe == frame && skeleton == oldSkeleton ) {
+		pose = &skeleton->poses[frame * skeleton->num_poses];
+		for ( i = 0; i < skeleton->num_poses; i++, pose++, relativeJoint++ ) {
 			VectorCopy( pose->translate, relativeJoint->translate );
 			QuatCopy( pose->rotate, relativeJoint->rotate );
 			VectorCopy( pose->scale, relativeJoint->scale );
 		}
 	} else {
 		lerp = 1.0f - backlerp;
-		pose = &data->poses[frame * data->num_poses];
-		oldpose = &data->poses[oldframe * data->num_poses];
-		for ( i = 0; i < data->num_poses; i++, oldpose++, pose++, relativeJoint++ ) {
+		pose = &skeleton->poses[frame * skeleton->num_poses];
+		oldpose = &oldSkeleton->poses[oldframe * oldSkeleton->num_poses];
+		for ( i = 0; i < skeleton->num_poses; i++, oldpose++, pose++, relativeJoint++ ) {
 			relativeJoint->translate[0] = oldpose->translate[0] * backlerp + pose->translate[0] * lerp;
 			relativeJoint->translate[1] = oldpose->translate[1] * backlerp + pose->translate[1] * lerp;
 			relativeJoint->translate[2] = oldpose->translate[2] * backlerp + pose->translate[2] * lerp;
@@ -1383,7 +1393,7 @@ static void ComputePoseMats( iqmData_t *data, int frame, int oldframe,
 	jointParent = data->jointParents;
 	invBindMat = data->invBindJoints;
 	poseMat = poseMats;
-	for ( i = 0; i < data->num_poses; i++, relativeJoint++, jointParent++, invBindMat += 12, poseMat += 12 ) {
+	for ( i = 0; i < skeleton->num_poses; i++, relativeJoint++, jointParent++, invBindMat += 12, poseMat += 12 ) {
 		float mat1[12], mat2[12];
 
 		JointToMatrix( relativeJoint->rotate, relativeJoint->scale, relativeJoint->translate, mat1 );
@@ -1398,7 +1408,7 @@ static void ComputePoseMats( iqmData_t *data, int frame, int oldframe,
 	}
 }
 
-static void ComputeJointMats( iqmData_t *data, int frame, int oldframe,
+static void ComputeJointMats( iqmData_t *data, iqmData_t *skeleton, iqmData_t *oldSkeleton, int frame, int oldframe,
 			      float backlerp, float *mat ) {
 	float	*mat1;
 	int	i;
@@ -1408,7 +1418,7 @@ static void ComputeJointMats( iqmData_t *data, int frame, int oldframe,
 		return;
 	}
 
-	ComputePoseMats( data, frame, oldframe, backlerp, mat );
+	ComputePoseMats( data, skeleton, oldSkeleton, frame, oldframe, backlerp, mat );
 
 	for( i = 0; i < data->num_joints; i++ ) {
 		float outmat[12];
@@ -1419,7 +1429,6 @@ static void ComputeJointMats( iqmData_t *data, int frame, int oldframe,
 		Matrix34Multiply( outmat, data->bindJoints + 12*i, mat1 );
 	}
 }
-
 
 /*
 =================
@@ -1447,13 +1456,28 @@ void RB_IQMSurfaceAnim( surfaceType_t *surface ) {
 	vec2_t		*outTexCoord;
 	uint16_t *outColor;
 
-	int	frame = data->num_frames ? backEnd.currentEntity->e.frame % data->num_frames : 0;
-	int	oldframe = data->num_frames ? backEnd.currentEntity->e.oldframe % data->num_frames : 0;
+	iqmData_t	*skeleton = R_GetIQMModelDataByHandle( backEnd.currentEntity->e.frameModel, data );
+	iqmData_t	*oldSkeleton = R_GetIQMModelDataByHandle( backEnd.currentEntity->e.oldframeModel, data );
+
+	int	frame = skeleton->num_frames ? backEnd.currentEntity->e.frame % skeleton->num_frames : 0;
+	int	oldframe = oldSkeleton->num_frames ? backEnd.currentEntity->e.oldframe % oldSkeleton->num_frames : 0;
 	float	backlerp = backEnd.currentEntity->e.backlerp;
 
 	int		*tri;
 	glIndex_t	*ptr;
 	glIndex_t	base;
+
+	if ( data != skeleton && data->num_joints != skeleton->num_poses ) {
+		ri.Printf( PRINT_WARNING, "WARNING: frameModel '%s' for model '%s' has different number of joints\n",
+				R_GetModelByHandle( backEnd.currentEntity->e.frameModel )->name, R_GetModelByHandle( backEnd.currentEntity->e.hModel )->name );
+		skeleton = data;
+	}
+
+	if ( data != oldSkeleton && data->num_joints != oldSkeleton->num_poses ) {
+		ri.Printf( PRINT_WARNING, "WARNING: oldframeModel '%s' for model '%s' has different number of joints\n",
+				R_GetModelByHandle( backEnd.currentEntity->e.oldframeModel )->name, R_GetModelByHandle( backEnd.currentEntity->e.hModel )->name );
+		oldSkeleton = data;
+	}
 
 	RB_CHECKOVERFLOW( surf->num_vertexes, surf->num_triangles * 3 );
 
@@ -1474,9 +1498,9 @@ void RB_IQMSurfaceAnim( surfaceType_t *surface ) {
 	outTexCoord = &tess.texCoords[tess.numVertexes];
 	outColor = tess.color[tess.numVertexes];
 
-	if ( data->num_poses > 0 ) {
+	if ( skeleton->num_poses > 0 ) {
 		// compute interpolated joint matrices
-		ComputePoseMats( data, frame, oldframe, backlerp, poseMats );
+		ComputePoseMats( data, skeleton, oldSkeleton, frame, oldframe, backlerp, poseMats );
 
 		// compute vertex blend influence matricies
 		for( i = 0; i < surf->num_influences; i++ ) {
@@ -1528,7 +1552,7 @@ void RB_IQMSurfaceAnim( surfaceType_t *surface ) {
 				vtxMat[10] = blendWeights[0] * poseMats[12 * data->influenceBlendIndexes[4*influence + 0] + 10];
 				vtxMat[11] = blendWeights[0] * poseMats[12 * data->influenceBlendIndexes[4*influence + 0] + 11];
 
-				for( j = 1; j < 4; j++ ) {
+				for( j = 1; j < 3; j++ ) {
 					if ( blendWeights[j] <= 0.0f ) {
 						break;
 					}
@@ -1662,6 +1686,25 @@ void RB_IQMSurfaceAnimVao(srfVaoIQModel_t * surface)
 {
 	iqmData_t *data = surface->iqmData;
 
+	iqmData_t	*skeleton = R_GetIQMModelDataByHandle( backEnd.currentEntity->e.frameModel, data );
+	iqmData_t	*oldSkeleton = R_GetIQMModelDataByHandle( backEnd.currentEntity->e.oldframeModel, data );
+
+	int	frame = skeleton->num_frames ? backEnd.currentEntity->e.frame % skeleton->num_frames : 0;
+	int	oldframe = oldSkeleton->num_frames ? backEnd.currentEntity->e.oldframe % oldSkeleton->num_frames : 0;
+	float	backlerp = backEnd.currentEntity->e.backlerp;
+
+	if ( data != skeleton && data->num_joints != skeleton->num_poses ) {
+		ri.Printf( PRINT_WARNING, "WARNING: frameModel '%s' for model '%s' has different number of joints\n",
+				R_GetModelByHandle( backEnd.currentEntity->e.frameModel )->name, R_GetModelByHandle( backEnd.currentEntity->e.hModel )->name );
+		skeleton = data;
+	}
+
+	if ( data != oldSkeleton && data->num_joints != oldSkeleton->num_poses ) {
+		ri.Printf( PRINT_WARNING, "WARNING: oldframeModel '%s' for model '%s' has different number of joints\n",
+				R_GetModelByHandle( backEnd.currentEntity->e.oldframeModel )->name, R_GetModelByHandle( backEnd.currentEntity->e.hModel )->name );
+		oldSkeleton = data;
+	}
+
 	if (ShaderRequiresCPUDeforms(tess.shader))
 	{
 		RB_IQMSurfaceAnim((surfaceType_t*)surface->iqmSurface);
@@ -1682,17 +1725,14 @@ void RB_IQMSurfaceAnimVao(srfVaoIQModel_t * surface)
 	tess.numIndexes = surface->numIndexes;
 	tess.numVertexes = surface->numVerts;
 
-	glState.boneAnimation = data->num_poses;
+	glState.boneAnimation = skeleton->num_poses;
 
 	if ( glState.boneAnimation ) {
 		float		jointMats[IQM_MAX_JOINTS * 12];
-		int			frame = data->num_frames ? backEnd.currentEntity->e.frame % data->num_frames : 0;
-		int			oldframe = data->num_frames ? backEnd.currentEntity->e.oldframe % data->num_frames : 0;
-		float		backlerp = backEnd.currentEntity->e.backlerp;
 		int i;
 
 		// compute interpolated joint matrices
-		ComputePoseMats( surface->iqmData, frame, oldframe, backlerp, jointMats );
+		ComputePoseMats( data, skeleton, oldSkeleton, frame, oldframe, backlerp, jointMats );
 
 		// convert row-major order 3x4 matrix to column-major order 4x4 matrix
 		for ( i = 0; i < data->num_poses; i++ ) {
@@ -1721,25 +1761,34 @@ void RB_IQMSurfaceAnimVao(srfVaoIQModel_t * surface)
 }
 
 int R_IQMLerpTag( orientation_t *tag, iqmData_t *data,
-		  int startFrame, int endFrame, 
+		  int startTagIndex,
+		  qhandle_t frameModel, int startFrame,
+		  qhandle_t endFrameModel, int endFrame,
 		  float frac, const char *tagName ) {
+	iqmData_t	*startSkeleton, *endSkeleton;
 	float	jointMats[IQM_MAX_JOINTS * 12];
 	int	joint;
 	char	*names = data->jointNames;
 
 	// get joint number by reading the joint names
 	for( joint = 0; joint < data->num_joints; joint++ ) {
-		if( !strcmp( tagName, names ) )
+		if( joint >= startTagIndex && !strcmp( tagName, names ) )
 			break;
 		names += strlen( names ) + 1;
 	}
 	if( joint >= data->num_joints ) {
-		AxisClear( tag->axis );
-		VectorClear( tag->origin );
-		return qfalse;
+		return -1;
 	}
 
-	ComputeJointMats( data, startFrame, endFrame, frac, jointMats );
+	// just checking if tag exists
+	if( !tag ) {
+		return joint;
+	}
+
+	startSkeleton = R_GetIQMModelDataByHandle( frameModel, data );
+	endSkeleton = R_GetIQMModelDataByHandle( endFrameModel, data );
+
+	ComputeJointMats( data, startSkeleton, endSkeleton, startFrame, endFrame, frac, jointMats );
 
 	tag->axis[0][0] = jointMats[12 * joint + 0];
 	tag->axis[1][0] = jointMats[12 * joint + 1];
@@ -1754,5 +1803,5 @@ int R_IQMLerpTag( orientation_t *tag, iqmData_t *data,
 	tag->axis[2][2] = jointMats[12 * joint + 10];
 	tag->origin[2] = jointMats[12 * joint + 11];
 
-	return qtrue;
+	return joint;
 }

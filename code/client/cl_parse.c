@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 // cl_parse.c  -- parse a message received from the server
@@ -44,7 +52,6 @@ void SHOWNET( msg_t *msg, char *s) {
 	}
 }
 
-
 /*
 =========================================================================
 
@@ -55,22 +62,57 @@ MESSAGE PARSING
 
 /*
 ==================
+CL_LocalPlayerAdded
+==================
+*/
+void CL_LocalPlayerAdded(int localPlayerNum, int playerNum) {
+	if (playerNum < 0 || playerNum >= MAX_CLIENTS)
+		return;
+
+	clc.playerNums[localPlayerNum] = playerNum;
+}
+
+/*
+==================
+CL_LocalPlayerRemoved
+==================
+*/
+void CL_LocalPlayerRemoved(int localPlayerNum) {
+	if (clc.playerNums[localPlayerNum] == -1)
+		return;
+
+	clc.playerNums[localPlayerNum] = -1;
+}
+
+/*
+==================
+CL_ParseEntityState
+
+Client only looks at shared part of entityState_t
+==================
+*/
+sharedEntityState_t *CL_ParseEntityState( int num ) {
+	return DA_ElementPointer( cl.parseEntities, num % cl.parseEntities.maxElements );
+}
+
+/*
+==================
 CL_DeltaEntity
 
 Parses deltas from the given base and adds the resulting entity
 to the current frame
 ==================
 */
-void CL_DeltaEntity (msg_t *msg, clSnapshot_t *frame, int newnum, entityState_t *old, 
+void CL_DeltaEntity (msg_t *msg, clSnapshot_t *frame, int newnum, sharedEntityState_t *old, 
 					 qboolean unchanged) {
-	entityState_t	*state;
+	sharedEntityState_t	*state;
 
 	// save the parsed entity state into the big circular buffer so
 	// it can be used as the source for a later delta
-	state = &cl.parseEntities[cl.parseEntitiesNum & (MAX_PARSE_ENTITIES-1)];
+	state = CL_ParseEntityState( cl.parseEntitiesNum );
 
 	if ( unchanged ) {
-		*state = *old;
+		Com_Memcpy( state, old, cl.cgameEntityStateSize );
 	} else {
 		MSG_ReadDeltaEntity( msg, old, state, newnum );
 	}
@@ -90,7 +132,7 @@ CL_ParsePacketEntities
 */
 void CL_ParsePacketEntities( msg_t *msg, clSnapshot_t *oldframe, clSnapshot_t *newframe) {
 	int			newnum;
-	entityState_t	*oldstate;
+	sharedEntityState_t	*oldstate;
 	int			oldindex, oldnum;
 
 	newframe->parseEntitiesNum = cl.parseEntitiesNum;
@@ -105,8 +147,7 @@ void CL_ParsePacketEntities( msg_t *msg, clSnapshot_t *oldframe, clSnapshot_t *n
 		if ( oldindex >= oldframe->numEntities ) {
 			oldnum = 99999;
 		} else {
-			oldstate = &cl.parseEntities[
-				(oldframe->parseEntitiesNum + oldindex) & (MAX_PARSE_ENTITIES-1)];
+			oldstate = CL_ParseEntityState(oldframe->parseEntitiesNum + oldindex);
 			oldnum = oldstate->number;
 		}
 	}
@@ -135,8 +176,7 @@ void CL_ParsePacketEntities( msg_t *msg, clSnapshot_t *oldframe, clSnapshot_t *n
 			if ( oldindex >= oldframe->numEntities ) {
 				oldnum = 99999;
 			} else {
-				oldstate = &cl.parseEntities[
-					(oldframe->parseEntitiesNum + oldindex) & (MAX_PARSE_ENTITIES-1)];
+				oldstate = CL_ParseEntityState(oldframe->parseEntitiesNum + oldindex);
 				oldnum = oldstate->number;
 			}
 		}
@@ -152,8 +192,7 @@ void CL_ParsePacketEntities( msg_t *msg, clSnapshot_t *oldframe, clSnapshot_t *n
 			if ( oldindex >= oldframe->numEntities ) {
 				oldnum = 99999;
 			} else {
-				oldstate = &cl.parseEntities[
-					(oldframe->parseEntitiesNum + oldindex) & (MAX_PARSE_ENTITIES-1)];
+				oldstate = CL_ParseEntityState(oldframe->parseEntitiesNum + oldindex);
 				oldnum = oldstate->number;
 			}
 			continue;
@@ -164,7 +203,7 @@ void CL_ParsePacketEntities( msg_t *msg, clSnapshot_t *oldframe, clSnapshot_t *n
 			if ( cl_shownet->integer == 3 ) {
 				Com_Printf ("%3i:  baseline: %i\n", msg->readcount, newnum);
 			}
-			CL_DeltaEntity( msg, newframe, newnum, &cl.entityBaselines[newnum], qfalse );
+			CL_DeltaEntity( msg, newframe, newnum, DA_ElementPointer( cl.entityBaselines, newnum ), qfalse );
 			continue;
 		}
 
@@ -183,8 +222,7 @@ void CL_ParsePacketEntities( msg_t *msg, clSnapshot_t *oldframe, clSnapshot_t *n
 		if ( oldindex >= oldframe->numEntities ) {
 			oldnum = 99999;
 		} else {
-			oldstate = &cl.parseEntities[
-				(oldframe->parseEntitiesNum + oldindex) & (MAX_PARSE_ENTITIES-1)];
+			oldstate = CL_ParseEntityState(oldframe->parseEntitiesNum + oldindex);
 			oldnum = oldstate->number;
 		}
 	}
@@ -204,9 +242,18 @@ void CL_ParseSnapshot( msg_t *msg ) {
 	int			len;
 	clSnapshot_t	*old;
 	clSnapshot_t	newSnap;
+	sharedPlayerState_t *newPS, *oldPS;
 	int			deltaNum;
 	int			oldMessageNum;
 	int			i, packetNum;
+
+	if ( !cgvm ) {
+		Com_Error( ERR_DROP, "Received unexpected snapshot" );
+	}
+
+	if ( !cl.cgamePlayerStateSize || !cl.cgameEntityStateSize ) {
+		Com_Error( ERR_DROP, "cgame needs to call trap_SetNetFields" );
+	}
 
 	// get the reliable sequence acknowledge number
 	// NOTE: now sent with all server to client messages
@@ -253,30 +300,68 @@ void CL_ParseSnapshot( msg_t *msg ) {
 			// The frame that the server did the delta from
 			// is too old, so we can't reconstruct it properly.
 			Com_Printf ("Delta frame too old.\n");
-		} else if ( cl.parseEntitiesNum - old->parseEntitiesNum > MAX_PARSE_ENTITIES - MAX_SNAPSHOT_ENTITIES ) {
+		} else if ( cl.parseEntitiesNum - old->parseEntitiesNum > cl.parseEntities.maxElements - MAX_SNAPSHOT_ENTITIES * CL_MAX_SPLITVIEW ) {
 			Com_Printf ("Delta parseEntitiesNum too old.\n");
 		} else {
 			newSnap.valid = qtrue;	// valid delta parse
 		}
 	}
 
-	// read areamask
-	len = MSG_ReadByte( msg );
-	
-	if(len > sizeof(newSnap.areamask))
-	{
-		Com_Error (ERR_DROP,"CL_ParseSnapshot: Invalid size %d for areamask", len);
-		return;
-	}
-	
-	MSG_ReadData( msg, &newSnap.areamask, len);
+	DA_Clear( &cl.tempSnapshotPS );
 
 	// read playerinfo
 	SHOWNET( msg, "playerstate" );
-	if ( old ) {
-		MSG_ReadDeltaPlayerstate( msg, &old->ps, &newSnap.ps );
-	} else {
-		MSG_ReadDeltaPlayerstate( msg, NULL, &newSnap.ps );
+
+	newSnap.numPSs = MSG_ReadByte( msg );
+	if (newSnap.numPSs > MAX_SPLITVIEW) {
+		Com_DPrintf(S_COLOR_YELLOW "Warning: Got numPSs as %d (max=%d)\n", newSnap.numPSs, MAX_SPLITVIEW);
+		newSnap.numPSs = MAX_SPLITVIEW;
+	}
+
+	for (i = 0; i < MAX_SPLITVIEW; i++) {
+		newSnap.localPlayerIndex[i] = MSG_ReadByte( msg );
+		newSnap.playerNums[i] = MSG_ReadByte( msg );
+
+		// -1 gets converted to 255 should be set to -1 (and so should all invalid values)
+		if ( newSnap.localPlayerIndex[i] >= newSnap.numPSs || newSnap.playerNums[i] >= MAX_CLIENTS ) {
+			newSnap.localPlayerIndex[i] = -1;
+			newSnap.playerNums[i] = -1;
+		}
+
+		// read areamask
+		len = MSG_ReadByte( msg );
+
+		if(len > sizeof(newSnap.areamask[0]))
+		{
+			Com_Error (ERR_DROP,"CL_ParseSnapshot: Invalid size %d for areamask", len);
+			return;
+		}
+
+		MSG_ReadData( msg, &newSnap.areamask[i], len);
+	}
+
+	for (i = 0; i < MAX_SPLITVIEW; i++) {
+		// Read player states
+		if (newSnap.localPlayerIndex[i] != -1) {
+			newPS = (sharedPlayerState_t *) DA_ElementPointer( cl.tempSnapshotPS, newSnap.localPlayerIndex[i] );
+
+			if ( old && old->valid && old->localPlayerIndex[i] != -1 ) {
+				oldPS = (sharedPlayerState_t *) DA_ElementPointer( old->playerStates, old->localPlayerIndex[i] );
+
+				MSG_ReadDeltaPlayerstate( msg, oldPS, newPS, newSnap.playerNums[i] );
+			} else {
+				MSG_ReadDeltaPlayerstate( msg, NULL, newPS, newSnap.playerNums[i] );
+			}
+		}
+
+		// Server added or removed local player
+		if ( old && old->playerNums[i] != newSnap.playerNums[i] ) {
+			CL_LocalPlayerRemoved( i );
+
+			if ( newSnap.playerNums[i] != -1 ) {
+				CL_LocalPlayerAdded( i, newSnap.playerNums[i] );
+			}
+		}
 	}
 
 	// read packet entities
@@ -302,13 +387,18 @@ void CL_ParseSnapshot( msg_t *msg ) {
 		cl.snapshots[oldMessageNum & PACKET_MASK].valid = qfalse;
 	}
 
+	// copy player states from temp to snapshot
+	DA_Copy( cl.tempSnapshotPS, &cl.snapshots[newSnap.messageNum & PACKET_MASK].playerStates );
+	newSnap.playerStates = cl.snapshots[newSnap.messageNum & PACKET_MASK].playerStates;
+
 	// copy to the current good spot
 	cl.snap = newSnap;
 	cl.snap.ping = 999;
 	// calculate ping time
 	for ( i = 0 ; i < PACKET_BACKUP ; i++ ) {
 		packetNum = ( clc.netchan.outgoingSequence - 1 - i ) & PACKET_MASK;
-		if ( cl.snap.ps.commandTime >= cl.outPackets[ packetNum ].p_serverTime ) {
+		newPS = (sharedPlayerState_t *) DA_ElementPointer( cl.snap.playerStates, 0 );
+		if ( newPS->commandTime >= cl.outPackets[ packetNum ].p_serverTime ) {
 			cl.snap.ping = cls.realtime - cl.outPackets[ packetNum ].p_realtime;
 			break;
 		}
@@ -327,7 +417,6 @@ void CL_ParseSnapshot( msg_t *msg ) {
 
 //=====================================================================
 
-int cl_connectedToPureServer;
 int cl_connectedToCheatServer;
 
 /*
@@ -344,7 +433,9 @@ void CL_SystemInfoChanged( void ) {
 	const char		*s, *t;
 	char			key[BIG_INFO_KEY];
 	char			value[BIG_INFO_VALUE];
-	qboolean		gameSet;
+	char			gamedir[BIG_INFO_VALUE];
+	char			*gameTitle;
+	char			filename[MAX_QPATH];
 
 	systemInfo = cl.gameState.stringData + cl.gameState.stringOffsets[ CS_SYSTEMINFO ];
 	// NOTE TTimo:
@@ -354,16 +445,19 @@ void CL_SystemInfoChanged( void ) {
 	cl.serverId = atoi( Info_ValueForKey( systemInfo, "sv_serverid" ) );
 
 #ifdef USE_VOIP
-#ifdef LEGACY_PROTOCOL
-	if(clc.compat)
-		clc.voipEnabled = qfalse;
-	else
+	s = Info_ValueForKey( systemInfo, "sv_voipProtocol" );
+	clc.voipEnabled = !Q_stricmp(s, "opus");
 #endif
-	{
-		s = Info_ValueForKey( systemInfo, "sv_voipProtocol" );
-		clc.voipEnabled = !Q_stricmp(s, "opus");
+
+	// set game directory
+	Q_strncpyz( gamedir, Info_ValueForKey( systemInfo, "fs_game" ), sizeof ( gamedir ) );
+	if ( !*gamedir ) {
+		Com_Error( ERR_DROP, "fs_game not set on server" );
 	}
-#endif
+	if ( FS_InvalidGameDir( gamedir ) ) {
+		Com_Error( ERR_DROP, "Invalid fs_game value '%s' on server", gamedir );
+	}
+	Cvar_Server_Set( "fs_game", gamedir );
 
 	// don't set any vars when playing a demo
 	if ( clc.demoplaying ) {
@@ -385,54 +479,30 @@ void CL_SystemInfoChanged( void ) {
 	t = Info_ValueForKey( systemInfo, "sv_referencedPakNames" );
 	FS_PureServerSetReferencedPaks( s, t );
 
-	gameSet = qfalse;
+	// create game title file if does not exist
+	gameTitle = Info_ValueForKey( systemInfo, "sv_gameTitle" );
+	Com_sprintf( filename, sizeof ( filename ), "%s/description.txt", gamedir );
+	if ( ( cl_allowDownload->integer & DLF_ENABLE ) && *gameTitle && !FS_SV_RW_FileExists( filename ) ) {
+		fileHandle_t f = FS_SV_FOpenFileWrite( filename );
+		FS_Write( gameTitle, strlen( gameTitle ), f );
+		FS_FCloseFile( f );
+	}
+
 	// scan through all the variables in the systeminfo and locally set cvars to match
 	s = systemInfo;
 	while ( s ) {
-		int cvar_flags;
-		
 		Info_NextPair( &s, key, value );
 		if ( !key[0] ) {
 			break;
 		}
 		
-		// ehw!
-		if (!Q_stricmp(key, "fs_game"))
-		{
-			if(FS_InvalidGameDir(value))
-			{
-				Com_Printf(S_COLOR_YELLOW "WARNING: Server sent invalid fs_game value %s\n", value);
-				continue;
-			}
-				
-			gameSet = qtrue;
+		// gamedir is already set
+		if (!Q_stricmp(key, "fs_game")) {
+			continue;
 		}
 
-		if((cvar_flags = Cvar_Flags(key)) == CVAR_NONEXISTENT)
-			Cvar_Get(key, value, CVAR_SERVER_CREATED | CVAR_ROM);
-		else
-		{
-			// If this cvar may not be modified by a server discard the value.
-			if(!(cvar_flags & (CVAR_SYSTEMINFO | CVAR_SERVER_CREATED | CVAR_USER_CREATED)))
-			{
-#ifndef STANDALONE
-				if(Q_stricmp(key, "g_synchronousClients") && Q_stricmp(key, "pmove_fixed") &&
-				   Q_stricmp(key, "pmove_msec"))
-#endif
-				{
-					Com_Printf(S_COLOR_YELLOW "WARNING: server is not allowed to set %s=%s\n", key, value);
-					continue;
-				}
-			}
-
-			Cvar_SetSafe(key, value);
-		}
+		Cvar_Server_Set(key, value);
 	}
-	// if game folder should not be set and it is set at the client side
-	if ( !gameSet && *Cvar_VariableString("fs_game") ) {
-		Cvar_Set( "fs_game", "" );
-	}
-	cl_connectedToPureServer = Cvar_VariableValue( "sv_pure" );
 }
 
 /*
@@ -461,9 +531,7 @@ CL_ParseGamestate
 */
 void CL_ParseGamestate( msg_t *msg ) {
 	int				i;
-	entityState_t	*es;
 	int				newnum;
-	entityState_t	nullstate;
 	int				cmd;
 	char			*s;
 	char oldGame[MAX_QPATH];
@@ -505,22 +573,19 @@ void CL_ParseGamestate( msg_t *msg ) {
 			cl.gameState.stringOffsets[ i ] = cl.gameState.dataCount;
 			Com_Memcpy( cl.gameState.stringData + cl.gameState.dataCount, s, len + 1 );
 			cl.gameState.dataCount += len + 1;
-		} else if ( cmd == svc_baseline ) {
-			newnum = MSG_ReadBits( msg, GENTITYNUM_BITS );
-			if ( newnum < 0 || newnum >= MAX_GENTITIES ) {
-				Com_Error( ERR_DROP, "Baseline number out of range: %i", newnum );
-			}
-			Com_Memset (&nullstate, 0, sizeof(nullstate));
-			es = &cl.entityBaselines[ newnum ];
-			MSG_ReadDeltaEntity( msg, &nullstate, es, newnum );
 		} else {
 			Com_Error( ERR_DROP, "CL_ParseGamestate: bad command byte" );
 		}
 	}
 
-	clc.clientNum = MSG_ReadLong(msg);
-	// read the checksum feed
-	clc.checksumFeed = MSG_ReadLong( msg );
+	// read playerNums
+	for ( i = 0; i < MAX_SPLITVIEW; i++ ) {
+		newnum = MSG_ReadLong(msg);
+		if (newnum >= 0 && newnum < MAX_CLIENTS)
+			CL_LocalPlayerAdded(i, newnum);
+		else
+			CL_LocalPlayerRemoved(i);
+	}
 
 	// save old gamedir
 	Cvar_VariableStringBuffer("fs_game", oldGame, sizeof(oldGame));
@@ -542,7 +607,9 @@ void CL_ParseGamestate( msg_t *msg ) {
 		Q_strncpyz(cl_oldGame, oldGame, sizeof(cl_oldGame));
 	}
 
-	FS_ConditionalRestart(clc.checksumFeed, qfalse);
+	if (FS_ConditionalRestart(qfalse)) {
+		clc.fsRestarted = qtrue;
+	}
 
 	// This used to call CL_StartHunkUsers, but now we enter the download state before loading the
 	// cgame
@@ -550,6 +617,31 @@ void CL_ParseGamestate( msg_t *msg ) {
 
 	// make sure the game starts
 	Cvar_Set( "cl_paused", "0" );
+}
+
+/*
+==================
+CL_ParseBaseline
+==================
+*/
+void CL_ParseBaseline( msg_t *msg ) {
+	sharedEntityState_t	*es;
+	int					newnum;
+
+	if ( !cgvm ) {
+		Com_Error( ERR_DROP, "Received unexpected baseline" );
+	}
+
+	if ( !cl.entityBaselines.pointer ) {
+		Com_Error( ERR_DROP, "cgame needs to call trap_SetNetFields" );
+	}
+
+	newnum = MSG_ReadBits( msg, GENTITYNUM_BITS );
+	if ( newnum < 0 || newnum >= MAX_GENTITIES ) {
+		Com_Error( ERR_DROP, "Baseline number out of range: %i", newnum );
+	}
+	es = DA_ElementPointer( cl.entityBaselines, newnum );
+	MSG_ReadDeltaEntity( msg, NULL, es, newnum );
 }
 
 
@@ -655,16 +747,23 @@ void CL_ParseDownload ( msg_t *msg ) {
 static
 qboolean CL_ShouldIgnoreVoipSender(int sender)
 {
+	int i;
+
 	if (!cl_voip->integer)
 		return qtrue;  // VoIP is disabled.
-	else if ((sender == clc.clientNum) && (!clc.demoplaying))
-		return qtrue;  // ignore own voice (unless playing back a demo).
 	else if (clc.voipMuteAll)
 		return qtrue;  // all channels are muted with extreme prejudice.
 	else if (clc.voipIgnore[sender])
 		return qtrue;  // just ignoring this guy.
 	else if (clc.voipGain[sender] == 0.0f)
 		return qtrue;  // too quiet to play.
+
+	if (!clc.demoplaying) {
+		for ( i = 0; i < CL_MAX_SPLITVIEW; i++ ) {
+			if (sender == clc.playerNums[i])
+				return qtrue;  // ignore own voice (unless playing back a demo).
+		}
+	}
 
 	return qfalse;
 }
@@ -681,13 +780,13 @@ static void CL_PlayVoip(int sender, int samplecnt, const byte *data, int flags)
 {
 	if(flags & VOIP_DIRECT)
 	{
-		S_RawSamples(sender + 1, samplecnt, 48000, 2, 1,
+		S_RawSamples(sender + MAX_STREAMING_SOUNDS, samplecnt, 48000, 2, 1,
 	             data, clc.voipGain[sender], -1);
 	}
 
 	if(flags & VOIP_SPATIAL)
 	{
-		S_RawSamples(sender + MAX_CLIENTS + 1, samplecnt, 48000, 2, 1,
+		S_RawSamples(sender + MAX_CLIENTS + MAX_STREAMING_SOUNDS, samplecnt, 48000, 2, 1,
 	             data, 1.0f, sender);
 	}
 }
@@ -713,9 +812,11 @@ void CL_ParseVoip ( msg_t *msg, qboolean ignoreData ) {
 	int	numSamples;
 	int seqdiff;
 	int written = 0;
-	int i;
+	float voipPower = 0.0f;
+	const int16_t *sampbuffer;
+	int i, j;
 
-	Com_DPrintf("VoIP: %d-byte packet from client %d\n", packetsize, sender);
+	Com_DPrintf("VoIP: %d-byte packet from player %d\n", packetsize, sender);
 
 	if (sender < 0)
 		return;   // short/invalid packet, bail.
@@ -773,14 +874,14 @@ void CL_ParseVoip ( msg_t *msg, qboolean ignoreData ) {
 		seqdiff = 0;
 	} else if (seqdiff * VOIP_MAX_PACKET_SAMPLES*2 >= sizeof (decoded)) { // dropped more than we can handle?
 		// just start over.
-		Com_DPrintf("VoIP: Dropped way too many (%d) frames from client #%d\n",
+		Com_DPrintf("VoIP: Dropped way too many (%d) frames from player #%d\n",
 		            seqdiff, sender);
 		opus_decoder_ctl(clc.opusDecoder[sender], OPUS_RESET_STATE);
 		seqdiff = 0;
 	}
 
 	if (seqdiff != 0) {
-		Com_DPrintf("VoIP: Dropped %d frames from client #%d\n",
+		Com_DPrintf("VoIP: Dropped %d frames from player #%d\n",
 		            seqdiff, sender);
 		// tell opus that we're missing frames...
 		for (i = 0; i < seqdiff; i++) {
@@ -810,6 +911,15 @@ void CL_ParseVoip ( msg_t *msg, qboolean ignoreData ) {
 	if (decio != NULL) { fwrite(decoded+written, numSamples*2, 1, decio); fflush(decio); }
 	#endif
 
+	sampbuffer = (const int16_t *)decoded + written;
+
+	// calculate the "power" of this packet...
+	for (j = 0; j < numSamples; j++) {
+		const float flsamp = (float) sampbuffer[j];
+		const float s = fabs(flsamp);
+		voipPower += s * s;
+	}
+
 	written += numSamples;
 
 	Com_DPrintf("VoIP: playback %d bytes, %d samples, %d frames\n",
@@ -818,7 +928,11 @@ void CL_ParseVoip ( msg_t *msg, qboolean ignoreData ) {
 	if(written > 0)
 		CL_PlayVoip(sender, written, (const byte *) decoded, flags);
 
+	clc.voipPower[sender] = (voipPower / (32768.0f * 32768.0f *
+			                 ((float) numSamples))) * 100.0f;
+
 	clc.voipIncomingSequence[sender] = sequence + frames;
+	clc.voipLastPacketTime[sender] = cl.serverTime;
 }
 #endif
 
@@ -909,6 +1023,9 @@ void CL_ParseServerMessage( msg_t *msg ) {
 			break;
 		case svc_gamestate:
 			CL_ParseGamestate( msg );
+			break;
+		case svc_baseline:
+			CL_ParseBaseline( msg );
 			break;
 		case svc_snapshot:
 			CL_ParseSnapshot( msg );

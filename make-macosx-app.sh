@@ -130,60 +130,41 @@ fi
 AVAILABLE_ARCHS=""
 
 IOQ3_VERSION=`grep '^VERSION=' Makefile | sed -e 's/.*=\(.*\)/\1/'`
+IOQ3_RENDERER_PREFIX=`grep '^RENDERER_PREFIX=' Makefile | sed -e 's/.*=\(.*\)/\1/'`
 IOQ3_CLIENT_ARCHS=""
 IOQ3_SERVER_ARCHS=""
 IOQ3_RENDERER_GL1_ARCHS=""
 IOQ3_RENDERER_GL2_ARCHS=""
-IOQ3_CGAME_ARCHS=""
-IOQ3_GAME_ARCHS=""
-IOQ3_UI_ARCHS=""
-IOQ3_MP_CGAME_ARCHS=""
-IOQ3_MP_GAME_ARCHS=""
-IOQ3_MP_UI_ARCHS=""
 
-BASEDIR="baseq3"
-MISSIONPACKDIR="missionpack"
+RENDERER_OPENGL="${IOQ3_RENDERER_PREFIX}opengl"
 
-CGAME="cgame"
-GAME="qagame"
-UI="ui"
-
-RENDERER_OPENGL="renderer_opengl"
-
-DEDICATED_NAME="ioq3ded"
-
-CGAME_NAME="${CGAME}.dylib"
-GAME_NAME="${GAME}.dylib"
-UI_NAME="${UI}.dylib"
+EXECUTABLE_NAME="spearmint"
+DEDICATED_NAME="spearmint-server"
 
 RENDERER_OPENGL1_NAME="${RENDERER_OPENGL}1.dylib"
 RENDERER_OPENGL2_NAME="${RENDERER_OPENGL}2.dylib"
 
 ICNSDIR="misc"
-ICNS="quake3_flat.icns"
-PKGINFO="APPLIOQ3"
+ICNS="spearmint.icns"
+PKGINFO="APPL????"
 
 OBJROOT="build"
 #BUILT_PRODUCTS_DIR="${OBJROOT}/${TARGET_NAME}-darwin-${CURRENT_ARCH}"
-PRODUCT_NAME="ioquake3"
+PRODUCT_NAME="Spearmint"
 WRAPPER_EXTENSION="app"
 WRAPPER_NAME="${PRODUCT_NAME}.${WRAPPER_EXTENSION}"
 CONTENTS_FOLDER_PATH="${WRAPPER_NAME}/Contents"
 UNLOCALIZED_RESOURCES_FOLDER_PATH="${CONTENTS_FOLDER_PATH}/Resources"
 EXECUTABLE_FOLDER_PATH="${CONTENTS_FOLDER_PATH}/MacOS"
-EXECUTABLE_NAME="${PRODUCT_NAME}"
 
 # loop through the architectures to build string lists for each universal binary
 for ARCH in $SEARCH_ARCHS; do
 	CURRENT_ARCH=${ARCH}
 	BUILT_PRODUCTS_DIR="${OBJROOT}/${TARGET_NAME}-darwin-${CURRENT_ARCH}"
-	IOQ3_CLIENT="${EXECUTABLE_NAME}.${CURRENT_ARCH}"
-	IOQ3_SERVER="${DEDICATED_NAME}.${CURRENT_ARCH}"
+	IOQ3_CLIENT="${EXECUTABLE_NAME}_${CURRENT_ARCH}"
+	IOQ3_SERVER="${DEDICATED_NAME}_${CURRENT_ARCH}"
 	IOQ3_RENDERER_GL1="${RENDERER_OPENGL}1_${CURRENT_ARCH}.dylib"
 	IOQ3_RENDERER_GL2="${RENDERER_OPENGL}2_${CURRENT_ARCH}.dylib"
-	IOQ3_CGAME="${CGAME}${CURRENT_ARCH}.dylib"
-	IOQ3_GAME="${GAME}${CURRENT_ARCH}.dylib"
-	IOQ3_UI="${UI}${CURRENT_ARCH}.dylib"
 
 	if [ ! -d ${BUILT_PRODUCTS_DIR} ]; then
 		CURRENT_ARCH=""
@@ -210,27 +191,6 @@ for ARCH in $SEARCH_ARCHS; do
 		IOQ3_RENDERER_GL2_ARCHS="${BUILT_PRODUCTS_DIR}/${IOQ3_RENDERER_GL2} ${IOQ3_RENDERER_GL2_ARCHS}"
 	fi
 
-	# game
-	if [ -e ${BUILT_PRODUCTS_DIR}/${BASEDIR}/${IOQ3_CGAME} ]; then
-		IOQ3_CGAME_ARCHS="${BUILT_PRODUCTS_DIR}/${BASEDIR}/${IOQ3_CGAME} ${IOQ3_CGAME_ARCHS}"
-	fi
-	if [ -e ${BUILT_PRODUCTS_DIR}/${BASEDIR}/${IOQ3_GAME} ]; then
-		IOQ3_GAME_ARCHS="${BUILT_PRODUCTS_DIR}/${BASEDIR}/${IOQ3_GAME} ${IOQ3_GAME_ARCHS}"
-	fi
-	if [ -e ${BUILT_PRODUCTS_DIR}/${BASEDIR}/${IOQ3_UI} ]; then
-		IOQ3_UI_ARCHS="${BUILT_PRODUCTS_DIR}/${BASEDIR}/${IOQ3_UI} ${IOQ3_UI_ARCHS}"
-	fi
-	# missionpack
-	if [ -e ${BUILT_PRODUCTS_DIR}/${MISSIONPACKDIR}/${IOQ3_CGAME} ]; then
-		IOQ3_MP_CGAME_ARCHS="${BUILT_PRODUCTS_DIR}/${MISSIONPACKDIR}/${IOQ3_CGAME} ${IOQ3_MP_CGAME_ARCHS}"
-	fi
-	if [ -e ${BUILT_PRODUCTS_DIR}/${MISSIONPACKDIR}/${IOQ3_GAME} ]; then
-		IOQ3_MP_GAME_ARCHS="${BUILT_PRODUCTS_DIR}/${MISSIONPACKDIR}/${IOQ3_GAME} ${IOQ3_MP_GAME_ARCHS}"
-	fi
-	if [ -e ${BUILT_PRODUCTS_DIR}/${MISSIONPACKDIR}/${IOQ3_UI} ]; then
-		IOQ3_MP_UI_ARCHS="${BUILT_PRODUCTS_DIR}/${MISSIONPACKDIR}/${IOQ3_UI} ${IOQ3_MP_UI_ARCHS}"
-	fi
-
 	#echo "valid arch: ${ARCH}"
 done
 
@@ -238,12 +198,12 @@ done
 cd `dirname $0`
 
 if [ ! -f Makefile ]; then
-	echo "$0 must be run from the ioquake3 build directory"
+	echo "$0 must be run from the spearmint build directory"
 	exit 1
 fi
 
 if [ "${IOQ3_CLIENT_ARCHS}" == "" ]; then
-	echo "$0: no ioquake3 binary architectures were found for target '${TARGET_NAME}'"
+	echo "$0: no spearmint binary architectures were found for target '${TARGET_NAME}'"
 	exit 1
 fi
 
@@ -269,11 +229,8 @@ done
 echo ""
 
 # make the application bundle directories
-if [ ! -d "${BUILT_PRODUCTS_DIR}/${EXECUTABLE_FOLDER_PATH}/$BASEDIR" ]; then
-	mkdir -p "${BUILT_PRODUCTS_DIR}/${EXECUTABLE_FOLDER_PATH}/$BASEDIR" || exit 1;
-fi
-if [ ! -d "${BUILT_PRODUCTS_DIR}/${EXECUTABLE_FOLDER_PATH}/$MISSIONPACKDIR" ]; then
-	mkdir -p "${BUILT_PRODUCTS_DIR}/${EXECUTABLE_FOLDER_PATH}/$MISSIONPACKDIR" || exit 1;
+if [ ! -d "${BUILT_PRODUCTS_DIR}/${EXECUTABLE_FOLDER_PATH}" ]; then
+	mkdir -p "${BUILT_PRODUCTS_DIR}/${EXECUTABLE_FOLDER_PATH}" || exit 1;
 fi
 if [ ! -d "${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}" ]; then
 	mkdir -p "${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}" || exit 1;
@@ -291,12 +248,59 @@ PLIST="<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <dict>
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.data</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Spearmint Demo</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>moe.clover.spearmintdemo</string>
+            </array>
+        </dict>
+    </array>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeIdentifier</key>
+            <string>moe.clover.spearmintdemo</string>
+            <key>UTTypeDescription</key>
+            <string>Spearmint Demo</string>
+            <key>UTTypeIconFile</key>
+            <string>spearmint</string>
+            <key>UTTypeReferenceURL</key>
+            <string>https://clover.moe/spearmint</string>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <string>mintdemo</string>
+            </dict>
+        </dict>
+    </array>
     <key>CFBundleExecutable</key>
     <string>${EXECUTABLE_NAME}</string>
     <key>CFBundleIconFile</key>
-    <string>quake3_flat</string>
+    <string>spearmint</string>
     <key>CFBundleIdentifier</key>
-    <string>org.ioquake.${PRODUCT_NAME}</string>
+    <string>moe.clover.${PRODUCT_NAME}</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
@@ -343,7 +347,7 @@ fi
 
 PLIST="${PLIST}
     <key>NSHumanReadableCopyright</key>
-    <string>QUAKE III ARENA Copyright © 1999-2000 id Software, Inc. All rights reserved.</string>
+    <string>Copyright © 1999-2017 id Software LLC, ioquake3 contributors, Spearmint contributors.</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
     <key>NSHighResolutionCapable</key>
@@ -392,18 +396,3 @@ action "${BUNDLEBINDIR}/${RENDERER_OPENGL2_NAME}"		"${IOQ3_RENDERER_GL2_ARCHS}"
 symlinkArch "${RENDERER_OPENGL}1" "${RENDERER_OPENGL}1" "_" "${BUNDLEBINDIR}"
 symlinkArch "${RENDERER_OPENGL}2" "${RENDERER_OPENGL}2" "_" "${BUNDLEBINDIR}"
 
-# game
-action "${BUNDLEBINDIR}/${BASEDIR}/${CGAME_NAME}"		"${IOQ3_CGAME_ARCHS}"
-action "${BUNDLEBINDIR}/${BASEDIR}/${GAME_NAME}"		"${IOQ3_GAME_ARCHS}"
-action "${BUNDLEBINDIR}/${BASEDIR}/${UI_NAME}"			"${IOQ3_UI_ARCHS}"
-symlinkArch "${CGAME}"	"${CGAME}"	""	"${BUNDLEBINDIR}/${BASEDIR}"
-symlinkArch "${GAME}"	"${GAME}"	""	"${BUNDLEBINDIR}/${BASEDIR}"
-symlinkArch "${UI}"		"${UI}"		""	"${BUNDLEBINDIR}/${BASEDIR}"
-
-# missionpack
-action "${BUNDLEBINDIR}/${MISSIONPACKDIR}/${CGAME_NAME}"	"${IOQ3_MP_CGAME_ARCHS}"
-action "${BUNDLEBINDIR}/${MISSIONPACKDIR}/${GAME_NAME}"		"${IOQ3_MP_GAME_ARCHS}"
-action "${BUNDLEBINDIR}/${MISSIONPACKDIR}/${UI_NAME}"		"${IOQ3_MP_UI_ARCHS}"
-symlinkArch "${CGAME}"	"${CGAME}"	""	"${BUNDLEBINDIR}/${MISSIONPACKDIR}"
-symlinkArch "${GAME}"	"${GAME}"	""	"${BUNDLEBINDIR}/${MISSIONPACKDIR}"
-symlinkArch "${UI}"		"${UI}"		""	"${BUNDLEBINDIR}/${MISSIONPACKDIR}"

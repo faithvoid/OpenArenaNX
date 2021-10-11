@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 #include "q_shared.h"
@@ -27,8 +35,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define MAX_VMMAIN_ARGS 13
 
 // Max number of arguments to pass from a vm to engine's syscall handler function for the vm.
-// syscall number + 15 arguments
-#define MAX_VMSYSCALL_ARGS 16
+// qvm syscall number + vm syscall number + 15 args
+#define MAX_VMSYSCALL_ARGS 17
 
 // don't change, this is hardcoded into x86 VMs, opStack protection relies
 // on this
@@ -150,6 +158,7 @@ struct vm_s {
 	//------------------------------------
    
 	char		name[MAX_QPATH];
+	char		filename[MAX_OSPATH];
 	void	*searchPath;				// hint for FS_ReadFileDir()
 
 	// for dynamic linked modules
@@ -171,6 +180,11 @@ struct vm_s {
 	byte		*dataBase;
 	int			dataMask;
 	int			dataAlloc;			// actually allocated
+
+	int			zoneTag;			// tag for the memory zone owned by the VM (i.e., TAG_GAME or TAG_CGAME)
+	byte		*heapBase;			// base of dynamic memory pool
+	int			heapLength;			// length of the memory pool
+	int			heapRequestedSize;	// requested size of memory pool (for QVMs it may be smaller than heapLength)
 
 	int			stackBottom;		// if programStack < stackBottom, error
 
@@ -201,3 +215,5 @@ const char *VM_ValueToSymbol( vm_t *vm, int value );
 void VM_LogSyscalls( int *args );
 
 void VM_BlockCopy(unsigned int dest, unsigned int src, size_t n);
+
+intptr_t VM_QvmSyscall( intptr_t *args );

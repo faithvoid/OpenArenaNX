@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 
@@ -63,10 +71,6 @@ static qboolean	winsockInitialized = qfalse;
 #		define _BSD_SOCKLEN_T_
 #	endif
 
-#ifdef __SWITCH__
-#include <switch.h>
-#endif
-
 #	include <sys/socket.h>
 #	include <errno.h>
 #	include <netdb.h>
@@ -77,7 +81,7 @@ static qboolean	winsockInitialized = qfalse;
 #	include <sys/types.h>
 #	include <sys/time.h>
 #	include <unistd.h>
-#	if !defined(__sun) && !defined(__sgi) && !defined(__SWITCH__)
+#	if !defined(__sun) && !defined(__sgi)
 #		include <ifaddrs.h>
 #	endif
 
@@ -122,10 +126,8 @@ static SOCKET	ip6_socket = INVALID_SOCKET;
 static SOCKET	socks_socket = INVALID_SOCKET;
 static SOCKET	multicast6_socket = INVALID_SOCKET;
 
-#ifndef __SWITCH__
 // Keep track of currently joined multicast group.
 static struct ipv6_mreq curgroup;
-#endif
 // And the currently bound address.
 static struct sockaddr_in6 boundto;
 
@@ -232,14 +234,12 @@ static void NetadrToSockadr( netadr_t *a, struct sockaddr *s ) {
 		((struct sockaddr_in6 *)s)->sin6_port = a->port;
 		((struct sockaddr_in6 *)s)->sin6_scope_id = a->scope_id;
 	}
-#ifndef __SWITCH__
 	else if(a->type == NA_MULTICAST6)
 	{
 		((struct sockaddr_in6 *)s)->sin6_family = AF_INET6;
 		((struct sockaddr_in6 *)s)->sin6_addr = curgroup.ipv6mr_multiaddr;
 		((struct sockaddr_in6 *)s)->sin6_port = a->port;
 	}
-#endif
 }
 
 
@@ -258,72 +258,7 @@ static void SockadrToNetadr( struct sockaddr *s, netadr_t *a ) {
 	}
 }
 
-#ifdef __SWITCH__
 
-// apparently getaddrinfo is partially broken or something,
-// so here's a thing that uses gethostbyname instead
-
-static qboolean Sys_StringToSockaddr(const char *s, struct sockaddr *sadr, int sadr_len, sa_family_t family)
-{
-	if (!sadr || !s)
-		return qfalse;
-
-	memset(sadr, 0, sizeof(*sadr));
-
-	if (family == AF_UNSPEC)
-	{
-		family = AF_INET;
-	}
-	else if (family == AF_INET6)
-	{
-		Com_Printf("Sys_StringToSockaddr('%s'): IPv6 stuff not implemented\n", s);
-		return qfalse;
-	}
-
-	static char buf[2048];
-	strncpy(buf, s, sizeof(buf) - 1);
-
-	// scronch the port part
-	unsigned short port = 0;
-	char *pport = strrchr(buf, ':');
-	if (pport && pport[0] && pport[1])
-	{
-		*pport++ = '\0';
-		sscanf(pport, "%hu", &port);
-	}
-
-	struct sockaddr_in *sin = (struct sockaddr_in *)sadr;
-
-	// check if it's just an IP
-	struct in_addr inaddr = { 0 };
-	if (inet_pton(AF_INET, buf, &inaddr))
-	{
-		sin->sin_family = AF_INET;
-		sin->sin_port = htons(port);
-		sin->sin_addr = inaddr;
-		return qtrue;
-	}
-
-	// try to resolve it as a hostname
-	struct hostent *he = gethostbyname(buf);
-	if (!he)
-	{
-		Com_Printf("Sys_StringToSockaddr('%s'): gethostbyname('%s') failed: %s\n",
-								s, buf, hstrerror(h_errno));
-		return qfalse;
-	}
-
-	sin->sin_family = AF_INET;
-	sin->sin_port = htons(port);
-	memcpy(&(sin->sin_addr), he->h_addr_list[0], he->h_length);
-
-	freehostent(he);
-
-	return qtrue;
-}
-
-#else
-  
 static struct addrinfo *SearchAddrInfo(struct addrinfo *hints, sa_family_t family)
 {
 	while(hints)
@@ -406,8 +341,6 @@ static qboolean Sys_StringToSockaddr(const char *s, struct sockaddr *sadr, int s
 	return qfalse;
 }
 
-#endif
-
 /*
 =============
 Sys_SockaddrToString
@@ -415,20 +348,6 @@ Sys_SockaddrToString
 */
 static void Sys_SockaddrToString(char *dest, int destlen, struct sockaddr *input)
 {
-#ifdef __SWITCH__
-	if (input->sa_family == AF_INET6)
-	{
-		Com_Printf("Sys_SockaddrToString(): IPv6 stuff not implemented\n");
-		return;
-	}
-
-	struct sockaddr_in *sin = (struct sockaddr_in *)input;
-	if (inet_ntop(input->sa_family, &(sin->sin_addr), dest, destlen))
-		return;
-
-	Com_Printf("Sys_SockaddrToString(): inet_ntop() failed: %s\n", strerror(errno));
-	if (destlen) *dest = '\0';
-#else
 	socklen_t inputlen;
 
 	if (input->sa_family == AF_INET6)
@@ -438,7 +357,6 @@ static void Sys_SockaddrToString(char *dest, int destlen, struct sockaddr *input
 
 	if(getnameinfo(input, inputlen, dest, destlen, NULL, 0, NI_NUMERICHOST) && destlen > 0)
 		*dest = '\0';
-#endif
 }
 
 /*
@@ -1065,7 +983,7 @@ void NET_SetMulticast6(void)
 		
 		return;
 	}
-#ifndef __SWITCH__
+	
 	memcpy(&curgroup.ipv6mr_multiaddr, &addr.sin6_addr, sizeof(curgroup.ipv6mr_multiaddr));
 
 	if(*net_mcast6iface->string)
@@ -1078,7 +996,6 @@ void NET_SetMulticast6(void)
 	}
 	else
 		curgroup.ipv6mr_interface = 0;
-#endif
 }
 
 /*
@@ -1093,8 +1010,7 @@ void NET_JoinMulticast6(void)
 	
 	if(ip6_socket == INVALID_SOCKET || multicast6_socket != INVALID_SOCKET || (net_enabled->integer & NET_DISABLEMCAST))
 		return;
-
-#ifndef __SWITCH__
+	
 	if(IN6_IS_ADDR_MULTICAST(&boundto.sin6_addr) || IN6_IS_ADDR_UNSPECIFIED(&boundto.sin6_addr))
 	{
 		// The way the socket was bound does not prohibit receiving multi-cast packets. So we don't need to open a new one.
@@ -1136,19 +1052,17 @@ void NET_JoinMulticast6(void)
 			return;
 		}
 	}
-#endif
 }
 
 void NET_LeaveMulticast6()
 {
 	if(multicast6_socket != INVALID_SOCKET)
 	{
-#ifndef __SWITCH__
 		if(multicast6_socket != ip6_socket)
 			closesocket(multicast6_socket);
 		else
 			setsockopt(multicast6_socket, IPPROTO_IPV6, IPV6_LEAVE_GROUP, (char *) &curgroup, sizeof(curgroup));
-#endif
+
 		multicast6_socket = INVALID_SOCKET;
 	}
 }
@@ -1512,9 +1426,8 @@ NET_GetCvars
 static qboolean NET_GetCvars( void ) {
 	int modified;
 
-#if defined(DEDICATED) || defined(__SWITCH__)
+#ifdef DEDICATED
 	// I want server owners to explicitly turn on ipv6 support.
-	// the Switch also doesn't support ipv6
 	net_enabled = Cvar_Get( "net_enabled", "1", CVAR_LATCH | CVAR_ARCHIVE );
 #else
 	/* End users have it enabled so they can connect to ipv6-only hosts, but ipv4 will be

@@ -2,21 +2,29 @@
 ===========================================================================
 Copyright (C) 2011 Andrei Drexler, Richard Allen, James Canete
 
-This file is part of Reaction source code.
+This file is part of Spearmint Source Code.
 
-Reaction source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Reaction source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Reaction source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 
@@ -268,7 +276,7 @@ static void RB_RadialBlur(FBO_t *srcFbo, FBO_t *dstFbo, int passes, float stretc
 static qboolean RB_UpdateSunFlareVis(void)
 {
 	GLuint sampleCount = 0;
-	if (!glRefConfig.occlusionQuery)
+	if (!glRefConfig.occlusionQuery || !r_drawSunRaysOcclusionQuery->integer)
 		return qtrue;
 
 	tr.sunFlareQueryIndex ^= 1;
@@ -304,6 +312,9 @@ void RB_SunRays(FBO_t *srcFbo, ivec4_t srcBox, FBO_t *dstFbo, ivec4_t dstBox)
 //	float w, h, w2, h2;
 	mat4_t mvp;
 	vec4_t pos, hpos;
+
+	if (r_forceSunScale->value <= 0 && tr.sunShaderScale <= 0)
+		return;
 
 	dot = DotProduct(tr.sunDirection, backEnd.viewParms.or.axis[0]);
 	if (dot < cutoff)

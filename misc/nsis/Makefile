@@ -1,5 +1,8 @@
+ifndef FSNAME
+FSNAME=spearmint
+endif
 ifndef VERSION
-VERSION=1.36_SVN
+VERSION=1.0.3
 endif
 ifndef RELEASE
 RELEASE=0
@@ -66,21 +69,22 @@ ifeq ($(USE_INTERNAL_JPEG),1)
 	DEFINES+= -DUSE_INTERNAL_JPEG
 endif
 
+NSISFILENAME=${FSNAME}-${VERSION}-${RELEASE}.$(ARCH).exe
 
-all: ioquake3-$(VERSION)-$(RELEASE).$(ARCH).exe
+all: $(NSISFILENAME)
 
-ioquake3.$(ARCH).nsi: ioquake3.nsi.in
-	sed 's/XXXVERSIONXXX/$(VERSION)/;s/XXXRELEASEXXX/$(RELEASE)/;s/mingw32/$(PLATFORM)/g;s/x86/$(ARCH)/g;s/SDL2.dll/$(SDLDLL)/g;s/OpenAL32.dll/$(OPENALDLL)/g' < $< > $@
+spearmint.$(ARCH).nsi: spearmint.nsi.in
+	sed 's/XXXFILENAMEXXX/$(NSISFILENAME)/;s/XXXVERSIONXXX/$(VERSION)/;s/XXXRELEASEXXX/$(RELEASE)/;s/mingw32/$(PLATFORM)/g;s/x86/$(ARCH)/g;s/SDL2.dll/$(SDLDLL)/g;s/OpenAL32.dll/$(OPENALDLL)/g' < $< > $@
 
-ioquake3-$(VERSION)-$(RELEASE).$(ARCH).exe: ioquake3.$(ARCH).nsi
-	makensis $(DEFINES) ioquake3.$(ARCH).nsi
+$(NSISFILENAME): spearmint.$(ARCH).nsi
+	makensis $(DEFINES) spearmint.$(ARCH).nsi
 
 clean:
-	rm -rf *.exe ioquake3.$(ARCH).nsi
+	rm -rf *.exe spearmint.$(ARCH).nsi
 
 install:
 	mkdir -p $(INSTALLDIR)
-	mv ioquake3-$(VERSION)-$(RELEASE).$(ARCH).exe $(INSTALLDIR)
+	mv $(NSISFILENAME) $(INSTALLDIR)
 
 .PHONY: all clean
 

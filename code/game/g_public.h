@@ -1,29 +1,45 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 //
 
 // g_public.h -- game module information visible to server
 
-#define	GAME_API_VERSION	8
+#define GAME_API_NAME			"SPEARMINT_GAME"
+
+// major 0 means each minor is an API break.
+// major > 0 means each major is an API break and each minor extends API.
+// ZTM: FIXME: There is no way for the VM to know what the engine support API is
+//             so there is no way to add more system calls.
+#define	GAME_API_MAJOR_VERSION	1
+#define	GAME_API_MINOR_VERSION	0
+
 
 // entity->svFlags
 // the server does not know how to interpret most of the values
@@ -31,22 +47,16 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // special server behaviors
 #define	SVF_NOCLIENT			0x00000001	// don't send entity to clients, even if it has effects
 
-// TTimo
-// https://zerowing.idsoftware.com/bugzilla/show_bug.cgi?id=551
-#define SVF_CLIENTMASK 0x00000002
+#define SVF_PLAYERMASK			0x00000002 // send to limited list of players
 
 #define SVF_BOT					0x00000008	// set if the entity is a bot
-#define	SVF_BROADCAST			0x00000020	// send to all connected clients
+#define	SVF_BROADCAST			0x00000020	// send to all connected players (r.cullDistance will still be checked)
 #define	SVF_PORTAL				0x00000040	// merge a second pvs at origin2 into snapshots
 #define	SVF_USE_CURRENT_ORIGIN	0x00000080	// entity->r.currentOrigin instead of entity->s.origin
 											// for link position (missiles and movers)
-#define SVF_SINGLECLIENT		0x00000100	// only send to a single client (entityShared_t->singleClient)
-#define SVF_NOSERVERINFO		0x00000200	// don't send CS_SERVERINFO updates to this client
-											// so that it can be updated for ping tools without
-											// lagging clients
-#define SVF_CAPSULE				0x00000400	// use capsule for collision detection instead of bbox
-#define SVF_NOTSINGLECLIENT		0x00000800	// send entity to everyone but one client
-											// (entityShared_t->singleClient)
+
+#define SVF_VISDUMMY            0x00000400  // this ent is a "visibility dummy" and needs it's master to be sent to players that can see it even if they can't see the master ent
+#define SVF_VISDUMMY_MULTIPLE   0x00000800  // so that one vis dummy can add to snapshot multiple speakers
 
 
 
@@ -54,23 +64,13 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 
 typedef struct {
-	entityState_t	unused;			// apparently this field was put here accidentally
-									//  (and is kept only for compatibility, as a struct pad)
-
 	qboolean	linked;				// qfalse if not in any good cluster
 	int			linkcount;
 
 	int			svFlags;			// SVF_NOCLIENT, SVF_BROADCAST, etc
 
-	// only send to this client when SVF_SINGLECLIENT is set	
-	// if SVF_CLIENTMASK is set, use bitmask for clients to send to (maxclients must be <= 32, up to the mod to enforce this)
-	int			singleClient;		
-
-	qboolean	bmodel;				// if false, assume an explicit mins / maxs bounding box
-									// only set by trap_SetBrushModel
-	vec3_t		mins, maxs;
-	int			contents;			// CONTENTS_TRIGGER, CONTENTS_SOLID, CONTENTS_BODY, etc
-									// a non-solid entity should set to 0
+	// if SVF_PLAYERMASK is set, use bitmask for players to send to
+	clientList_t	sendPlayers;
 
 	vec3_t		absmin, absmax;		// derived from mins/maxs and origin + rotation
 
@@ -87,14 +87,23 @@ typedef struct {
 	// ent->r.ownerNum == passEntityNum	(don't interact with your own missiles)
 	// entity[ent->r.ownerNum].r.ownerNum == passEntityNum	(don't interact with other missiles from owner)
 	int			ownerNum;
+
+	// if set, entity is only sent to client if distance between entity and client <= cullDistance (even if SVF_BROADCAST is set)
+	int			cullDistance;
+
+	// if set, portal entities are only sent to client if distance between portal and player <= portalCullDistance
+	int			portalCullDistance;
+
+	// if SVF_VISDUMMY, number of master, else if not 0, it's the number of a target_vis_dummy_multiple.
+	int			visDummyNum;
 } entityShared_t;
 
 
 
 // the server looks at a sharedEntity, which is the start of the game's gentity_t structure
 typedef struct {
-	entityState_t	s;				// communicated by server to clients
 	entityShared_t	r;				// shared by both the server system and game
+	sharedEntityState_t	s;				// communicated by server to clients
 } sharedEntity_t;
 
 
@@ -104,10 +113,12 @@ typedef struct {
 //
 // system traps provided by the main engine
 //
+// also see qvmTraps_t in qcommon.h for QVM-specific system calls
+//
 typedef enum {
 	//============== general Quake services ==================
 
-	G_PRINT,		// ( const char *string );
+	G_PRINT = 0,	// ( const char *string );
 	// print message on the local console
 
 	G_ERROR,		// ( const char *string );
@@ -118,40 +129,76 @@ typedef enum {
 	// this should NOT be used for any game related tasks,
 	// because it is not journaled
 
-	// console variable interaction
-	G_CVAR_REGISTER,	// ( vmCvar_t *vmCvar, const char *varName, const char *defaultValue, int flags );
-	G_CVAR_UPDATE,	// ( vmCvar_t *vmCvar );
-	G_CVAR_SET,		// ( const char *var_name, const char *value );
-	G_CVAR_VARIABLE_INTEGER_VALUE,	// ( const char *var_name );
+	G_REAL_TIME,	// ( qtime_t *qtime );
 
-	G_CVAR_VARIABLE_STRING_BUFFER,	// ( const char *var_name, char *buffer, int bufsize );
+	G_SNAPVECTOR,	// ( float *v );
 
-	G_ARGC,			// ( void );
 	// ClientCommand and ServerCommand parameter access
-
+	G_ARGC,			// ( void );
 	G_ARGV,			// ( int n, char *buffer, int bufferLength );
+	G_ARGS,			// ( char *buffer, int bufferLength );
+	G_LITERAL_ARGS,	// ( char *buffer, int bufferLength );
 
-	G_FS_FOPEN_FILE,	// ( const char *qpath, fileHandle_t *file, fsMode_t mode );
-	G_FS_READ,		// ( void *buffer, int len, fileHandle_t f );
-	G_FS_WRITE,		// ( const void *buffer, int len, fileHandle_t f );
-	G_FS_FCLOSE_FILE,		// ( fileHandle_t f );
+	G_ADDCOMMAND,	// ( const char *cmdName );
+	G_REMOVECOMMAND,// ( const char *cmdName );
 
-	G_SEND_CONSOLE_COMMAND,	// ( const char *text );
+	G_CMD_EXECUTETEXT,	// ( int exec_when, const char *text );
 	// add commands to the console as if they were typed in
 	// for map changing, etc
 
+	// console variable interaction
+	G_CVAR_REGISTER,	// ( vmCvar_t *vmCvar, const char *varName, const char *defaultValue, int flags );
+	G_CVAR_UPDATE,		// ( vmCvar_t *vmCvar );
+	G_CVAR_SET,			// ( const char *var_name, const char *value );
+	G_CVAR_SET_VALUE,	// ( const char *var_name, float value );
+	G_CVAR_RESET,		// ( const char *var_name );
+	G_CVAR_VARIABLE_VALUE,					// ( const char *var_name );
+	G_CVAR_VARIABLE_INTEGER_VALUE,			// ( const char *var_name );
+	G_CVAR_VARIABLE_STRING_BUFFER,			// ( const char *var_name, char *buffer, int bufsize );
+	G_CVAR_LATCHED_VARIABLE_STRING_BUFFER,	// ( const char *var_name, char *buffer, int bufsize );
+	G_CVAR_DEFAULT_VARIABLE_STRING_BUFFER,	// ( const char *var_name, char *buffer, int bufsize );
+	G_CVAR_INFO_STRING_BUFFER,				// ( int bit, char *buffer, int bufsize );
+	G_CVAR_CHECK_RANGE,						// (  const char *var_name, float min, float max, qboolean integral );
+
+	G_FS_FOPEN_FILE,	// ( const char *qpath, fileHandle_t *file, fsMode_t mode );
+	G_FS_READ,			// ( void *buffer, int len, fileHandle_t f );
+	G_FS_WRITE,			// ( const void *buffer, int len, fileHandle_t f );
+	G_FS_SEEK,
+	G_FS_TELL,			// ( fileHandle_t f );
+	G_FS_FCLOSE_FILE,	// ( fileHandle_t f );
+	G_FS_GETFILELIST,
+	G_FS_DELETE,		// ( const void *path );
+	G_FS_RENAME,		// ( const void *from, const void *to );
+
+	G_PC_ADD_GLOBAL_DEFINE,				// ( const char *define );
+	G_PC_REMOVE_GLOBAL_DEFINE,			// ( const char *define );
+	G_PC_REMOVE_ALL_GLOBAL_DEFINES,		// ( void );
+	G_PC_LOAD_SOURCE,					// ( const char *filename, const char *basepath );
+	G_PC_FREE_SOURCE,					// ( int handle );
+	G_PC_ADD_DEFINE,					// ( int handle, const char *define );
+	G_PC_READ_TOKEN,					// ( int handle, pc_token_t *pc_token );
+	G_PC_UNREAD_TOKEN,					// ( int handle );
+	G_PC_SOURCE_FILE_AND_LINE,			// ( int handle, char *filename, int *line );
+
+	G_HEAP_MALLOC,		// ( int size );
+	G_HEAP_AVAILABLE,	// ( void );
+	G_HEAP_FREE,		// ( void *data );
+
+	G_FIELD_COMPLETEFILENAME, // ( const char *dir, const char *ext, qboolean stripExt, qboolean allowNonPureFilesOnDisk );
+	G_FIELD_COMPLETECOMMAND, // ( const char *cmd, qboolean doCommands, qboolean doCvars );
+	G_FIELD_COMPLETELIST, // ( const char *list );
 
 	//=========== server specific functionality =============
 
-	G_LOCATE_GAME_DATA,		// ( gentity_t *gEnts, int numGEntities, int sizeofGEntity_t,
-	//							playerState_t *clients, int sizeofGameClient );
+	G_LOCATE_GAME_DATA = 100,		// ( gentity_t *gEnts, int numGEntities, int sizeofGEntity_t,
+	//							playerState_t *players, int sizeofGamePlayer );
 	// the game needs to let the server system know where and how big the gentities
 	// are, so it can look at them directly without going through an interface
 
-	G_DROP_CLIENT,		// ( int clientNum, const char *reason );
-	// kick a client off the server with a message
+	G_DROP_PLAYER,		// ( int playerNum, const char *reason );
+	// kick a player off the server with a message
 
-	G_SEND_SERVER_COMMAND,	// ( int clientNum, const char *fmt, ... );
+	G_SEND_SERVER_COMMAND,	// ( int clientNum, int localPlayerNum, const char *text );
 	// reliably sends a command string to be interpreted by the given
 	// client.  If clientNum is -1, it will be sent to all clients
 
@@ -164,6 +211,8 @@ typedef enum {
 
 	G_GET_CONFIGSTRING,	// ( int num, char *buffer, int bufferSize );
 
+	G_SET_CONFIGSTRING_RESTRICTIONS, // ( int num, const clientList_t *clientList );
+
 	G_GET_USERINFO,		// ( int num, char *buffer, int bufferSize );
 	// userinfo strings are maintained by the server system, so they
 	// are persistant across level loads, while all other game visible
@@ -174,8 +223,8 @@ typedef enum {
 	G_GET_SERVERINFO,	// ( char *buffer, int bufferSize );
 	// the serverinfo info string has all the cvars visible to server browsers
 
-	G_SET_BRUSH_MODEL,	// ( gentity_t *ent, const char *name );
-	// sets mins and maxs based on the brushmodel name
+	G_GET_BRUSH_BOUNDS,	// ( int modelindex, vec3_t mins, vec3_t maxs );
+	// gets mins and maxs for inline brush model
 
 	G_TRACE,	// ( trace_t *results, const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end, int passEntityNum, int contentmask );
 	// collision detection against all linked entities
@@ -206,188 +255,38 @@ typedef enum {
 	G_ENTITY_CONTACT,	// ( const vec3_t mins, const vec3_t maxs, const gentity_t *ent );
 	// perform an exact check against inline brush models of non-square shape
 
-	// access for bots to get and free a server client (FIXME?)
-	G_BOT_ALLOCATE_CLIENT,	// ( void );
+	// access for bots to get and free a server client
+	G_BOT_ALLOCATE_CLIENT,			// ( void );
+	G_BOT_FREE_CLIENT,				// ( int playerNum );
+	G_BOT_GET_SNAPSHOT_ENTITY,		// ( int playerNum, int ent );
+	G_BOT_GET_SERVER_COMMAND,		// ( int playerNum, char *command, int size );
+	G_BOT_USER_COMMAND,				// ( int playerNum, usercmd_t *ucmd );
+	G_CLIENT_COMMAND,				// ( int playerNum, const char *command );
 
-	G_BOT_FREE_CLIENT,	// ( int clientNum );
+	G_GET_USERCMD,	// ( int playerNum, usercmd_t *cmd )
 
-	G_GET_USERCMD,	// ( int clientNum, usercmd_t *cmd )
-
-	G_GET_ENTITY_TOKEN,	// qboolean ( char *buffer, int bufferSize )
+	G_GET_ENTITY_TOKEN,	// qboolean ( int *parseOffset, char *buffer, int bufferSize )
 	// Retrieves the next string token from the entity spawn text, returning
 	// false when all tokens have been parsed.
-	// This should only be done at GAME_INIT time.
 
-	G_FS_GETFILELIST,
-	G_DEBUG_POLYGON_CREATE,
-	G_DEBUG_POLYGON_DELETE,
-	G_REAL_TIME,
-	G_SNAPVECTOR,
+	G_DEBUG_POLYGON_CREATE, // ( int color, int numPoints, vec3_t *points );
+	G_DEBUG_POLYGON_SHOW, // ( int id, int color, int numPoints, vec3_t *points );
+	G_DEBUG_POLYGON_DELETE, // ( int id );
 
 	G_TRACECAPSULE,	// ( trace_t *results, const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end, int passEntityNum, int contentmask );
 	G_ENTITY_CONTACTCAPSULE,	// ( const vec3_t mins, const vec3_t maxs, const gentity_t *ent );
-	
-	// 1.32
-	G_FS_SEEK,
 
-	BOTLIB_SETUP = 200,				// ( void );
-	BOTLIB_SHUTDOWN,				// ( void );
-	BOTLIB_LIBVAR_SET,
-	BOTLIB_LIBVAR_GET,
-	BOTLIB_PC_ADD_GLOBAL_DEFINE,
-	BOTLIB_START_FRAME,
-	BOTLIB_LOAD_MAP,
-	BOTLIB_UPDATENTITY,
-	BOTLIB_TEST,
+	G_SET_NET_FIELDS,
 
-	BOTLIB_GET_SNAPSHOT_ENTITY,		// ( int client, int ent );
-	BOTLIB_GET_CONSOLE_MESSAGE,		// ( int client, char *message, int size );
-	BOTLIB_USER_COMMAND,			// ( int client, usercmd_t *ucmd );
+	G_R_REGISTERMODEL, // ( const char *name );
+	G_R_LERPTAG, // ( orientation_t *tag, qhandle_t handle, int startFrame, int endFrame, float frac, const char *tagName );
+	G_R_LERPTAG_FRAMEMODEL, // ( orientation_t *tag, qhandle_t handle, qhandle_t frameModel, int startFrame, qhandle_t endFrameModel, int endFrame, float frac, const char *tagName, int *tagIndex );
+	G_R_LERPTAG_TORSO, // ( orientation_t *tag, qhandle_t handle, qhandle_t frameModel, int startFrame, qhandle_t endFrameModel, int endFrame, float frac, const char *tagName, int *tagIndex,
+	                   //   const vec3_t *torsoAxis, qhandle_t torsoFrameModel, int torsoFrame, qhandle_t oldTorsoFrameModel, int oldTorsoFrame, float torsoFrac );
+	G_R_MODELBOUNDS, // ( qhandle_t handle, vec3_t mins, vec3_t maxs, int startFrame, int endFrame, float frac );
 
-	BOTLIB_AAS_ENABLE_ROUTING_AREA = 300,
-	BOTLIB_AAS_BBOX_AREAS,
-	BOTLIB_AAS_AREA_INFO,
-	BOTLIB_AAS_ENTITY_INFO,
-
-	BOTLIB_AAS_INITIALIZED,
-	BOTLIB_AAS_PRESENCE_TYPE_BOUNDING_BOX,
-	BOTLIB_AAS_TIME,
-
-	BOTLIB_AAS_POINT_AREA_NUM,
-	BOTLIB_AAS_TRACE_AREAS,
-
-	BOTLIB_AAS_POINT_CONTENTS,
-	BOTLIB_AAS_NEXT_BSP_ENTITY,
-	BOTLIB_AAS_VALUE_FOR_BSP_EPAIR_KEY,
-	BOTLIB_AAS_VECTOR_FOR_BSP_EPAIR_KEY,
-	BOTLIB_AAS_FLOAT_FOR_BSP_EPAIR_KEY,
-	BOTLIB_AAS_INT_FOR_BSP_EPAIR_KEY,
-
-	BOTLIB_AAS_AREA_REACHABILITY,
-
-	BOTLIB_AAS_AREA_TRAVEL_TIME_TO_GOAL_AREA,
-
-	BOTLIB_AAS_SWIMMING,
-	BOTLIB_AAS_PREDICT_CLIENT_MOVEMENT,
-
-	BOTLIB_EA_SAY = 400,
-	BOTLIB_EA_SAY_TEAM,
-	BOTLIB_EA_COMMAND,
-
-	BOTLIB_EA_ACTION,
-	BOTLIB_EA_GESTURE,
-	BOTLIB_EA_TALK,
-	BOTLIB_EA_ATTACK,
-	BOTLIB_EA_USE,
-	BOTLIB_EA_RESPAWN,
-	BOTLIB_EA_CROUCH,
-	BOTLIB_EA_MOVE_UP,
-	BOTLIB_EA_MOVE_DOWN,
-	BOTLIB_EA_MOVE_FORWARD,
-	BOTLIB_EA_MOVE_BACK,
-	BOTLIB_EA_MOVE_LEFT,
-	BOTLIB_EA_MOVE_RIGHT,
-
-	BOTLIB_EA_SELECT_WEAPON,
-	BOTLIB_EA_JUMP,
-	BOTLIB_EA_DELAYED_JUMP,
-	BOTLIB_EA_MOVE,
-	BOTLIB_EA_VIEW,
-
-	BOTLIB_EA_END_REGULAR,
-	BOTLIB_EA_GET_INPUT,
-	BOTLIB_EA_RESET_INPUT,
-
-
-	BOTLIB_AI_LOAD_CHARACTER = 500,
-	BOTLIB_AI_FREE_CHARACTER,
-	BOTLIB_AI_CHARACTERISTIC_FLOAT,
-	BOTLIB_AI_CHARACTERISTIC_BFLOAT,
-	BOTLIB_AI_CHARACTERISTIC_INTEGER,
-	BOTLIB_AI_CHARACTERISTIC_BINTEGER,
-	BOTLIB_AI_CHARACTERISTIC_STRING,
-
-	BOTLIB_AI_ALLOC_CHAT_STATE,
-	BOTLIB_AI_FREE_CHAT_STATE,
-	BOTLIB_AI_QUEUE_CONSOLE_MESSAGE,
-	BOTLIB_AI_REMOVE_CONSOLE_MESSAGE,
-	BOTLIB_AI_NEXT_CONSOLE_MESSAGE,
-	BOTLIB_AI_NUM_CONSOLE_MESSAGE,
-	BOTLIB_AI_INITIAL_CHAT,
-	BOTLIB_AI_REPLY_CHAT,
-	BOTLIB_AI_CHAT_LENGTH,
-	BOTLIB_AI_ENTER_CHAT,
-	BOTLIB_AI_STRING_CONTAINS,
-	BOTLIB_AI_FIND_MATCH,
-	BOTLIB_AI_MATCH_VARIABLE,
-	BOTLIB_AI_UNIFY_WHITE_SPACES,
-	BOTLIB_AI_REPLACE_SYNONYMS,
-	BOTLIB_AI_LOAD_CHAT_FILE,
-	BOTLIB_AI_SET_CHAT_GENDER,
-	BOTLIB_AI_SET_CHAT_NAME,
-
-	BOTLIB_AI_RESET_GOAL_STATE,
-	BOTLIB_AI_RESET_AVOID_GOALS,
-	BOTLIB_AI_PUSH_GOAL,
-	BOTLIB_AI_POP_GOAL,
-	BOTLIB_AI_EMPTY_GOAL_STACK,
-	BOTLIB_AI_DUMP_AVOID_GOALS,
-	BOTLIB_AI_DUMP_GOAL_STACK,
-	BOTLIB_AI_GOAL_NAME,
-	BOTLIB_AI_GET_TOP_GOAL,
-	BOTLIB_AI_GET_SECOND_GOAL,
-	BOTLIB_AI_CHOOSE_LTG_ITEM,
-	BOTLIB_AI_CHOOSE_NBG_ITEM,
-	BOTLIB_AI_TOUCHING_GOAL,
-	BOTLIB_AI_ITEM_GOAL_IN_VIS_BUT_NOT_VISIBLE,
-	BOTLIB_AI_GET_LEVEL_ITEM_GOAL,
-	BOTLIB_AI_AVOID_GOAL_TIME,
-	BOTLIB_AI_INIT_LEVEL_ITEMS,
-	BOTLIB_AI_UPDATE_ENTITY_ITEMS,
-	BOTLIB_AI_LOAD_ITEM_WEIGHTS,
-	BOTLIB_AI_FREE_ITEM_WEIGHTS,
-	BOTLIB_AI_SAVE_GOAL_FUZZY_LOGIC,
-	BOTLIB_AI_ALLOC_GOAL_STATE,
-	BOTLIB_AI_FREE_GOAL_STATE,
-
-	BOTLIB_AI_RESET_MOVE_STATE,
-	BOTLIB_AI_MOVE_TO_GOAL,
-	BOTLIB_AI_MOVE_IN_DIRECTION,
-	BOTLIB_AI_RESET_AVOID_REACH,
-	BOTLIB_AI_RESET_LAST_AVOID_REACH,
-	BOTLIB_AI_REACHABILITY_AREA,
-	BOTLIB_AI_MOVEMENT_VIEW_TARGET,
-	BOTLIB_AI_ALLOC_MOVE_STATE,
-	BOTLIB_AI_FREE_MOVE_STATE,
-	BOTLIB_AI_INIT_MOVE_STATE,
-
-	BOTLIB_AI_CHOOSE_BEST_FIGHT_WEAPON,
-	BOTLIB_AI_GET_WEAPON_INFO,
-	BOTLIB_AI_LOAD_WEAPON_WEIGHTS,
-	BOTLIB_AI_ALLOC_WEAPON_STATE,
-	BOTLIB_AI_FREE_WEAPON_STATE,
-	BOTLIB_AI_RESET_WEAPON_STATE,
-
-	BOTLIB_AI_GENETIC_PARENTS_AND_CHILD_SELECTION,
-	BOTLIB_AI_INTERBREED_GOAL_FUZZY_LOGIC,
-	BOTLIB_AI_MUTATE_GOAL_FUZZY_LOGIC,
-	BOTLIB_AI_GET_NEXT_CAMP_SPOT_GOAL,
-	BOTLIB_AI_GET_MAP_LOCATION_GOAL,
-	BOTLIB_AI_NUM_INITIAL_CHATS,
-	BOTLIB_AI_GET_CHAT_MESSAGE,
-	BOTLIB_AI_REMOVE_FROM_AVOID_GOALS,
-	BOTLIB_AI_PREDICT_VISIBLE_POSITION,
-
-	BOTLIB_AI_SET_AVOID_GOAL_TIME,
-	BOTLIB_AI_ADD_AVOID_SPOT,
-	BOTLIB_AAS_ALTERNATIVE_ROUTE_GOAL,
-	BOTLIB_AAS_PREDICT_ROUTE,
-	BOTLIB_AAS_POINT_REACHABILITY_AREA_INDEX,
-
-	BOTLIB_PC_LOAD_SOURCE,
-	BOTLIB_PC_FREE_SOURCE,
-	BOTLIB_PC_READ_TOKEN,
-	BOTLIB_PC_SOURCE_FILE_AND_LINE
+	G_CLIPTOENTITIES, // ( trace_t *results, const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end, int passEntityNum, int contentmask );
+	G_CLIPTOENTITIESCAPSULE, // ( trace_t *results, const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end, int passEntityNum, int contentmask );
 
 } gameImport_t;
 
@@ -396,35 +295,54 @@ typedef enum {
 // functions exported by the game subsystem
 //
 typedef enum {
-	GAME_INIT,	// ( int levelTime, int randomSeed, int restart );
+	GAME_GETAPINAME = 100,
+	GAME_GETAPIVERSION,
+
+	GAME_INIT = 200,	// ( int levelTime, int randomSeed, int restart );
 	// init and shutdown will be called every single level
 	// The game should call G_GET_ENTITY_TOKEN to parse through all the
 	// entity configuration text and spawn gentities.
 
 	GAME_SHUTDOWN,	// (void);
 
-	GAME_CLIENT_CONNECT,	// ( int clientNum, qboolean firstTime, qboolean isBot );
-	// return NULL if the client is allowed to connect, otherwise return
+	GAME_PLAYER_CONNECT,	// ( int playerNum, qboolean firstTime, qboolean isBot, int clientNum, int localPlayerNum );
+	// return NULL if the player is allowed to connect, otherwise return
 	// a text string with the reason for denial
 
-	GAME_CLIENT_BEGIN,				// ( int clientNum );
+	GAME_PLAYER_BEGIN,				// ( int playerNum );
 
-	GAME_CLIENT_USERINFO_CHANGED,	// ( int clientNum );
+	GAME_PLAYER_USERINFO_CHANGED,	// ( int playerNum );
 
-	GAME_CLIENT_DISCONNECT,			// ( int clientNum );
+	GAME_PLAYER_DISCONNECT,			// ( int playerNum, qboolean force );
 
 	GAME_CLIENT_COMMAND,			// ( int clientNum );
 
-	GAME_CLIENT_THINK,				// ( int clientNum );
+	GAME_PLAYER_THINK,				// ( int playerNum );
 
 	GAME_RUN_FRAME,					// ( int levelTime );
 
 	GAME_CONSOLE_COMMAND,			// ( void );
-	// ConsoleCommand will be called when a command has been issued
+	// G_ConsoleCommand will be called when a command has been issued
 	// that is not recognized as a builtin function.
 	// The game can issue trap_argc() / trap_argv() commands to get the command
 	// and parameters.  Return qfalse if the game doesn't recognize it as a command.
 
-	BOTAI_START_FRAME				// ( int time );
+	BOTAI_START_FRAME,				// ( int time );
+
+	GAME_SNAPSHOT_CALLBACK,         // ( int entityNum, int playerNum );
+	// return qfalse if you don't want it to be added
+
+	GAME_VID_RESTART,				// ( void );
+	// caused by vid_restart on localhost server.
+	// model handles are no longer valid, must re-register all models.
+
+	GAME_MAP_RESTART,				// ( int levelTime, int restartTime );
+	// G_MapRestart will be called when a map_restart command has been issued;
+	//    caused by user, VM code, or server after restart time is hit.
+	// return restart time (levelTime + delay), -1 to do a full map reload,
+	//    or INT_MAX to prevent map restart.
+
+	GAME_CONSOLE_COMPLETEARGUMENT,		// ( int completeArgument );
+
 } gameExport_t;
 

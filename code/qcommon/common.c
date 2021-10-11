@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 // common.c -- misc functions used in client and server
@@ -31,15 +39,19 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include <winsock.h>
 #endif
 
+#include "../sys/sys_loadlib.h"
+
+// List of demo protocols that are supported for playback.
+// Also plays protocol com_protocol
 int demo_protocols[] =
-{ 67, 66, 0 };
+{ PROTOCOL_VERSION, 11, 10, /* 6,7,8,9 were skipped */ 5, 4, 3, 2, 0 };
 
 #define MAX_NUM_ARGVS	50
 
 #define MIN_DEDICATED_COMHUNKMEGS 1
 #define MIN_COMHUNKMEGS		56
-#define DEF_COMHUNKMEGS 	128
-#define DEF_COMZONEMEGS		24
+#define DEF_COMHUNKMEGS 	384
+#define DEF_COMZONEMEGS		64
 #define DEF_COMHUNKMEGS_S	XSTRING(DEF_COMHUNKMEGS)
 #define DEF_COMZONEMEGS_S	XSTRING(DEF_COMZONEMEGS)
 
@@ -55,6 +67,10 @@ static fileHandle_t logfile;
 fileHandle_t	com_journalFile;			// events are written here
 fileHandle_t	com_journalDataFile;		// config files are written here
 
+// Structure containing functions exported from refresh DLL
+refexport_t	re;
+
+cvar_t	*com_fs_pure;
 cvar_t	*com_speeds;
 cvar_t	*com_developer;
 cvar_t	*com_dedicated;
@@ -62,7 +78,9 @@ cvar_t	*com_timescale;
 cvar_t	*com_fixedtime;
 cvar_t	*com_journal;
 cvar_t	*com_maxfps;
+#if idppc_altivec
 cvar_t	*com_altivec;
+#endif
 cvar_t	*com_timedemo;
 cvar_t	*com_sv_running;
 cvar_t	*com_cl_running;
@@ -70,11 +88,8 @@ cvar_t	*com_logfile;		// 1 = buffer log, 2 = flush after each print
 cvar_t	*com_pipefile;
 cvar_t	*com_showtrace;
 cvar_t	*com_version;
-cvar_t	*com_blood;
+cvar_t	*com_singlePlayerActive;
 cvar_t	*com_buildScript;	// for automated data building scripts
-#ifdef CINEMATICS_INTRO
-cvar_t	*com_introPlayed;
-#endif
 cvar_t	*cl_paused;
 cvar_t	*sv_paused;
 cvar_t  *cl_packetdelay;
@@ -86,17 +101,22 @@ cvar_t	*com_maxfpsUnfocused;
 cvar_t	*com_minimized;
 cvar_t	*com_maxfpsMinimized;
 cvar_t	*com_abnormalExit;
-cvar_t	*com_standalone;
+cvar_t	*com_productName;
 cvar_t	*com_gamename;
 cvar_t	*com_protocol;
 #ifdef LEGACY_PROTOCOL
 cvar_t	*com_legacyprotocol;
 #endif
-cvar_t	*com_basegame;
 cvar_t  *com_homepath;
 cvar_t	*com_busyWait;
 #ifndef DEDICATED
 cvar_t  *con_autochat;
+#endif
+cvar_t	*com_demoext;
+
+#ifdef USE_RENDERER_DLOPEN
+cvar_t	*com_renderer;
+static void	*rendererLib = NULL;
 #endif
 
 #if idx64
@@ -115,12 +135,14 @@ int		time_backend;		// renderer backend time
 int			com_frameTime;
 int			com_frameNumber;
 
-qboolean	com_errorEntered = qfalse;
+int			com_errorEntered = 0;
 qboolean	com_fullyInitialized = qfalse;
 qboolean	com_gameRestarting = qfalse;
 qboolean	com_gameClientRestarting = qfalse;
 
 char	com_errorMessage[MAXPRINTMSG];
+
+int		com_playVideo = 0;
 
 void Com_WriteConfig_f( void );
 void CIN_CloseAllVideos( void );
@@ -205,7 +227,7 @@ void QDECL Com_Printf( const char *fmt, ... ) {
 			time( &aclock );
 			newtime = localtime( &aclock );
 
-			logfile = FS_FOpenFileWrite( "qconsole.log" );
+			logfile = FS_FOpenFileWrite( "console.log" );
 			
 			if(logfile)
 			{
@@ -267,19 +289,29 @@ void QDECL Com_Error( int code, const char *fmt, ... ) {
 	va_list		argptr;
 	static int	lastErrorTime;
 	static int	errorCount;
+	static int	lastErrorCode;
 	int			currentTime;
 	qboolean	restartClient;
 
-	if(com_errorEntered)
-		Sys_Error("recursive error after: %s", com_errorMessage);
+	com_errorEntered++;
+	lastErrorCode = code;
 
-	com_errorEntered = qtrue;
+	// turn recursive drop into fatal
+	if ( com_errorEntered == 2 && code == ERR_DROP && lastErrorCode == ERR_DROP ) {
+		code = ERR_FATAL;
+		Com_Printf("recursive error after: %s\n", com_errorMessage);
+	} else if ( com_errorEntered > 1 ) {
+		Sys_Error("recursive error after: %s", com_errorMessage);
+	}
 
 	Cvar_Set("com_errorCode", va("%i", code));
 
 	// when we are running automated scripts, make sure we
 	// know if anything failed
 	if ( com_buildScript && com_buildScript->integer ) {
+		code = ERR_FATAL;
+	}
+	else if ( !com_fullyInitialized ) {
 		code = ERR_FATAL;
 	}
 
@@ -298,15 +330,16 @@ void QDECL Com_Error( int code, const char *fmt, ... ) {
 	Q_vsnprintf (com_errorMessage, sizeof(com_errorMessage),fmt,argptr);
 	va_end (argptr);
 
-#ifdef __SWITCH__
-	// shit out the error immediately just in case
-	fprintf(stderr, "ERROR: %s\n", com_errorMessage);
-#endif
-
-	if (code != ERR_DISCONNECT && code != ERR_NEED_CD)
+	if (code != ERR_DISCONNECT)
 		Cvar_Set("com_errorMessage", com_errorMessage);
 
 	restartClient = com_gameClientRestarting && !( com_cl_running && com_cl_running->integer );
+	if ( com_gameRestarting ) {
+		if ( code == ERR_DROP && FS_TryLastValidGame() && com_cl_running && com_cl_running->integer ) {
+			CL_Shutdown(va("Change Game Directory: %s", com_errorMessage), qtrue, qtrue);
+			restartClient = qtrue;
+		}
+	}
 
 	com_gameRestarting = qfalse;
 	com_gameClientRestarting = qfalse;
@@ -335,26 +368,6 @@ void QDECL Com_Error( int code, const char *fmt, ... ) {
 		CL_FlushMemory( );
 		VM_Forced_Unload_Done();
 		FS_PureServerSetLoadedPaks("", "");
-		com_errorEntered = qfalse;
-		longjmp (abortframe, -1);
-	} else if ( code == ERR_NEED_CD ) {
-		VM_Forced_Unload_Start();
-		SV_Shutdown( "Server didn't have CD" );
-		if ( restartClient ) {
-			CL_Init();
-		}
-		if ( com_cl_running && com_cl_running->integer ) {
-			CL_Disconnect( qtrue );
-			CL_FlushMemory( );
-			VM_Forced_Unload_Done();
-			CL_CDDialog();
-		} else {
-			Com_Printf("Server didn't have CD\n" );
-			VM_Forced_Unload_Done();
-		}
-
-		FS_PureServerSetLoadedPaks("", "");
-
 		com_errorEntered = qfalse;
 		longjmp (abortframe, -1);
 	} else {
@@ -498,10 +511,7 @@ void Com_StartupVariable( const char *match ) {
 		
 		if(!match || !strcmp(s, match))
 		{
-			if(Cvar_Flags(s) == CVAR_NONEXISTENT)
-				Cvar_Get(s, Cmd_ArgsFrom(2), CVAR_USER_CREATED);
-			else
-				Cvar_Set2(s, Cmd_ArgsFrom(2), qfalse);
+			Cvar_User_Set(s, Cmd_ArgsFrom(2));
 		}
 	}
 }
@@ -529,9 +539,17 @@ qboolean Com_AddStartupCommands( void ) {
 			continue;
 		}
 
+		Cmd_TokenizeString( com_consoleLines[i] );
+
 		// set commands already added with Com_StartupVariable
-		if ( !Q_stricmpn( com_consoleLines[i], "set ", 4 ) ) {
+		if ( !strcmp( Cmd_Argv(0), "set" ) ) {
 			continue;
+		}
+
+		// if passed a demo filename without a command, try to play the demo
+		// ZTM: TODO: Check for absolute path then open file and check for DEMO_MAGIC so it works with any demo extension?
+		if ( FS_IsDemoExt( Cmd_Argv(0), strlen( Cmd_Argv(0) ) ) ) {
+			Cbuf_AddText( "demo " );
 		}
 
 		added = qtrue;
@@ -803,8 +821,71 @@ static memzone_t	*mainzone;
 // we also have a small zone for small allocations that would only
 // fragment the main zone (think of cvar and cmd strings)
 static memzone_t	*smallzone;
+// zones for Game / CGame VM "dynamic" memory allocation
+static memzone_t	*vm_gamezone;
+static memzone_t	*vm_cgamezone;
 
 static void Z_CheckHeap( void );
+
+/*
+========================
+Z_ZoneForTag
+========================
+*/
+memzone_t *Z_ZoneForTag( int tag ) {
+	switch ( tag ) {
+		case TAG_GAME:
+			return vm_gamezone;
+		case TAG_CGAME:
+			return vm_cgamezone;
+		case TAG_SMALL:
+			return smallzone;
+		default:
+			return mainzone;
+	}
+}
+
+/*
+========================
+Z_NameForZone
+========================
+*/
+const char *Z_NameForZone( memzone_t *zone ) {
+	if ( !zone ) {
+		return "NULL";
+	} else if ( zone == mainzone ) {
+		return "Main";
+	} else if ( zone == smallzone ) {
+		return "Small";
+	} else if ( zone == vm_gamezone ) {
+		return "Game VM";
+	} else if ( zone == vm_cgamezone ) {
+		return "CGame VM";
+	} else {
+		return "Unknown";
+	}
+}
+
+/*
+========================
+Z_CvarNameForZone
+========================
+*/
+const char *Z_CvarNameForZone( memzone_t *zone ) {
+	if ( !zone ) {
+		return NULL;
+	} else if ( zone == mainzone ) {
+		return "com_zoneMegs";
+	} else if ( zone == smallzone ) {
+		return NULL;
+	} else if ( zone == vm_gamezone ) {
+		return "vm_gameHeapMegs";
+	} else if ( zone == vm_cgamezone ) {
+		return "vm_cgameHeapMegs";
+	} else {
+		return NULL;
+	}
+}
 
 /*
 ========================
@@ -854,20 +935,37 @@ int Z_AvailableMemory( void ) {
 Z_Free
 ========================
 */
-void Z_Free( void *ptr ) {
+#ifdef ZONE_DEBUG
+void Z_FreeDebug( void *ptr, char *label, char *file, int line )
+#else
+void Z_Free( void *ptr )
+#endif
+{
 	memblock_t	*block, *other;
 	memzone_t *zone;
 	
 	if (!ptr) {
+#ifdef ZONE_DEBUG
+		Com_Error( ERR_DROP, "Z_Free: NULL pointer (%s %s:%d)", label, file, line );
+#else
 		Com_Error( ERR_DROP, "Z_Free: NULL pointer" );
+#endif
 	}
 
 	block = (memblock_t *) ( (byte *)ptr - sizeof(memblock_t));
 	if (block->id != ZONEID) {
+#ifdef ZONE_DEBUG
+		Com_Error( ERR_FATAL, "Z_Free: freed a pointer without ZONEID (%s %s:%d)", label, file, line );
+#else
 		Com_Error( ERR_FATAL, "Z_Free: freed a pointer without ZONEID" );
+#endif
 	}
 	if (block->tag == 0) {
+#ifdef ZONE_DEBUG
+		Com_Error( ERR_FATAL, "Z_Free: freed a freed pointer (%s %s:%d)", label, file, line );
+#else
 		Com_Error( ERR_FATAL, "Z_Free: freed a freed pointer" );
+#endif
 	}
 	// if static memory
 	if (block->tag == TAG_STATIC) {
@@ -876,15 +974,14 @@ void Z_Free( void *ptr ) {
 
 	// check the memory trash tester
 	if ( *(int *)((byte *)block + block->size - 4 ) != ZONEID ) {
+#ifdef ZONE_DEBUG
+		Com_Error( ERR_FATAL, "Z_Free: memory block wrote past end (%s %s:%d)", label, file, line );
+#else
 		Com_Error( ERR_FATAL, "Z_Free: memory block wrote past end" );
+#endif
 	}
 
-	if (block->tag == TAG_SMALL) {
-		zone = smallzone;
-	}
-	else {
-		zone = mainzone;
-	}
+	zone = Z_ZoneForTag( block->tag );
 
 	zone->used -= block->size;
 	// set the block to something that should cause problems
@@ -922,25 +1019,25 @@ void Z_Free( void *ptr ) {
 Z_FreeTags
 ================
 */
-void Z_FreeTags( int tag ) {
+int Z_FreeTags( int tag ) {
+	int			count;
 	memzone_t	*zone;
 
-	if ( tag == TAG_SMALL ) {
-		zone = smallzone;
-	}
-	else {
-		zone = mainzone;
-	}
+	zone = Z_ZoneForTag( tag );
+	count = 0;
 	// use the rover as our pointer, because
 	// Z_Free automatically adjusts it
 	zone->rover = zone->blocklist.next;
 	do {
 		if ( zone->rover->tag == tag ) {
+			count++;
 			Z_Free( (void *)(zone->rover + 1) );
 			continue;
 		}
 		zone->rover = zone->rover->next;
 	} while ( zone->rover != &zone->blocklist );
+
+	return count;
 }
 
 
@@ -963,12 +1060,7 @@ void *Z_TagMalloc( int size, int tag ) {
 		Com_Error( ERR_FATAL, "Z_TagMalloc: tried to use a 0 tag" );
 	}
 
-	if ( tag == TAG_SMALL ) {
-		zone = smallzone;
-	}
-	else {
-		zone = mainzone;
-	}
+	zone = Z_ZoneForTag( tag );
 
 #ifdef ZONE_DEBUG
 	allocSize = size;
@@ -987,14 +1079,25 @@ void *Z_TagMalloc( int size, int tag ) {
 	do {
 		if (rover == start)	{
 			// scaned all the way around the list
+			char cvarMessage[128];
+			const char *cvarName;
+
+			// display user friendly message for overly common error
+			cvarName = Z_CvarNameForZone(zone);
+			if (cvarName) {
+				Com_sprintf(cvarMessage, sizeof(cvarMessage), " (increase %s cvar value, current value %s)", cvarName, Cvar_VariableString(cvarName));
+			} else {
+				cvarMessage[0] = '\0';
+			}
+
 #ifdef ZONE_DEBUG
 			Z_LogHeap();
 
-			Com_Error(ERR_FATAL, "Z_Malloc: failed on allocation of %i bytes from the %s zone: %s, line: %d (%s)",
-								size, zone == smallzone ? "small" : "main", file, line, label);
+			Com_Error(ERR_FATAL, "Z_Malloc: failed on allocation of %i bytes from the %s zone%s: %s, line: %d (%s)",
+								size, Z_NameForZone(zone), cvarMessage, file, line, label);
 #else
-			Com_Error(ERR_FATAL, "Z_Malloc: failed on allocation of %i bytes from the %s zone",
-								size, zone == smallzone ? "small" : "main");
+			Com_Error(ERR_FATAL, "Z_Malloc: failed on allocation of %i bytes from the %s zone%s",
+								size, Z_NameForZone(zone), cvarMessage);
 #endif
 			return NULL;
 		}
@@ -1290,24 +1393,26 @@ void Com_Meminfo_f( void ) {
 	memblock_t	*block;
 	int			zoneBytes, zoneBlocks;
 	int			smallZoneBytes;
-	int			botlibBytes, rendererBytes;
+	int			rendererBytes;
 	int			unused;
 
 	zoneBytes = 0;
-	botlibBytes = 0;
 	rendererBytes = 0;
 	zoneBlocks = 0;
 	for (block = mainzone->blocklist.next ; ; block = block->next) {
 		if ( Cmd_Argc() != 1 ) {
+#ifdef ZONE_DEBUG
+			Com_Printf ("block:%p    size:%7i    tag:%3i    allocSize: %7i    label: %s    where: %s:%d\n",
+				(void *)block, block->size, block->tag, block->d.allocSize, block->d.label, block->d.file, block->d.line);
+#else
 			Com_Printf ("block:%p    size:%7i    tag:%3i\n",
 				(void *)block, block->size, block->tag);
+#endif
 		}
 		if ( block->tag ) {
 			zoneBytes += block->size;
 			zoneBlocks++;
-			if ( block->tag == TAG_BOTLIB ) {
-				botlibBytes += block->size;
-			} else if ( block->tag == TAG_RENDERER ) {
+			if ( block->tag == TAG_RENDERER ) {
 				rendererBytes += block->size;
 			}
 		}
@@ -1365,9 +1470,8 @@ void Com_Meminfo_f( void ) {
 	Com_Printf( "%8i unused highwater\n", unused );
 	Com_Printf( "\n" );
 	Com_Printf( "%8i bytes in %i zone blocks\n", zoneBytes, zoneBlocks	);
-	Com_Printf( "        %8i bytes in dynamic botlib\n", botlibBytes );
 	Com_Printf( "        %8i bytes in dynamic renderer\n", rendererBytes );
-	Com_Printf( "        %8i bytes in dynamic other\n", zoneBytes - ( botlibBytes + rendererBytes ) );
+	Com_Printf( "        %8i bytes in dynamic other\n", zoneBytes - rendererBytes );
 	Com_Printf( "        %8i bytes in small Zone memory\n", smallZoneBytes );
 }
 
@@ -1415,7 +1519,7 @@ void Com_TouchMemory( void ) {
 
 	end = Sys_Milliseconds();
 
-	Com_Printf( "Com_TouchMemory: %i msec\n", end - start );
+	Com_DPrintf( "Com_TouchMemory: %i msec\n", end - start );
 }
 
 
@@ -1447,6 +1551,7 @@ void Com_InitZoneMemory( void ) {
 	cv = Cvar_Get( "com_zoneMegs", DEF_COMZONEMEGS_S, CVAR_LATCH | CVAR_ARCHIVE );
 
 	if ( cv->integer < DEF_COMZONEMEGS ) {
+		Cvar_Set( "com_zoneMegs", DEF_COMZONEMEGS_S );
 		s_zoneTotal = 1024 * 1024 * DEF_COMZONEMEGS;
 	} else {
 		s_zoneTotal = cv->integer * 1024 * 1024;
@@ -1571,6 +1676,7 @@ void Com_InitHunkMemory( void ) {
 	}
 
 	if ( cv->integer < nMinAlloc ) {
+		Cvar_SetValue( "com_hunkMegs", nMinAlloc );
 		s_hunkTotal = 1024 * 1024 * nMinAlloc;
 	    Com_Printf(pMsg, nMinAlloc, s_hunkTotal / (1024 * 1024));
 	} else {
@@ -1646,7 +1752,6 @@ qboolean Hunk_CheckMark( void ) {
 }
 
 void CL_ShutdownCGame( void );
-void CL_ShutdownUI( void );
 void SV_ShutdownGameProgs( void );
 
 /*
@@ -1660,7 +1765,6 @@ void Hunk_Clear( void ) {
 
 #ifndef DEDICATED
 	CL_ShutdownCGame();
-	CL_ShutdownUI();
 #endif
 	SV_ShutdownGameProgs();
 #ifndef DEDICATED
@@ -1679,7 +1783,7 @@ void Hunk_Clear( void ) {
 	hunk_permanent = &hunk_low;
 	hunk_temp = &hunk_high;
 
-	Com_Printf( "Hunk_Clear: reset the hunk ok\n" );
+	Com_DPrintf( "Hunk_Clear: reset the hunk ok\n" );
 	VM_Clear();
 #ifdef HUNK_DEBUG
 	hunkblocks = NULL;
@@ -1746,9 +1850,9 @@ void *Hunk_Alloc( int size, ha_pref preference ) {
 		Hunk_Log();
 		Hunk_SmallLog();
 
-		Com_Error(ERR_DROP, "Hunk_Alloc failed on %i: %s, line: %d (%s)", size, file, line, label);
+		Com_Error(ERR_DROP, "Hunk_Alloc failed on %i bytes (increase com_hunkMegs cvar value, current value %d): %s, line: %d (%s)", size, Cvar_VariableIntegerValue("com_hunkMegs"), file, line, label);
 #else
-		Com_Error(ERR_DROP, "Hunk_Alloc failed on %i", size);
+		Com_Error(ERR_DROP, "Hunk_Alloc failed on %i bytes (increase com_hunkMegs cvar value, current value %d)", size, Cvar_VariableIntegerValue("com_hunkMegs"));
 #endif
 	}
 
@@ -1808,7 +1912,7 @@ void *Hunk_AllocateTempMemory( int size ) {
 	size = PAD(size, sizeof(intptr_t)) + sizeof( hunkHeader_t );
 
 	if ( hunk_temp->temp + hunk_permanent->permanent + size > s_hunkTotal ) {
-		Com_Error( ERR_DROP, "Hunk_AllocateTempMemory: failed on %i", size );
+		Com_Error( ERR_DROP, "Hunk_AllocateTempMemory: failed on %i bytes (increase com_hunkMegs cvar value, current value %d)", size, Cvar_VariableIntegerValue( "com_hunkMegs" ) );
 	}
 
 	if ( hunk_temp == &hunk_low ) {
@@ -1891,6 +1995,250 @@ void Hunk_ClearTempMemory( void ) {
 	if ( s_hunkData != NULL ) {
 		hunk_temp->temp = hunk_temp->permanent;
 	}
+}
+
+/*
+===================================================================
+
+VM memory heap interface
+
+The memory pool is allocated as a single block on the hunk for
+each VM and managed using zone memory functions.
+
+===================================================================
+*/
+
+/*
+=================
+Z_VM_InitHeap
+
+Initialize a zone on the VM's preallocated hunk memory
+=================
+*/
+void Z_VM_InitHeap( int tag, void *preallocated, int size ) {
+	memzone_t *zone;
+
+	zone = preallocated;
+
+	if ( tag == TAG_GAME ) {
+		vm_gamezone = zone;
+	} else if ( tag == TAG_CGAME ) {
+		vm_cgamezone = zone;
+	} else {
+		Com_Error( ERR_FATAL, "Z_VM_InitHeap received unknown tag %d", tag );
+	}
+
+	// if NULL, just clear reference
+	if ( !zone ) {
+		return;
+	}
+
+	Z_ClearZone( zone, size );
+}
+
+/*
+========================
+Z_VM_HeapAvailable
+========================
+*/
+int Z_VM_HeapAvailable( int tag ) {
+	memzone_t *zone = Z_ZoneForTag( tag );
+
+	if ( tag == TAG_GAME ) {
+		zone = vm_gamezone;
+	} else if ( tag == TAG_CGAME ) {
+		zone = vm_cgamezone;
+	} else {
+		Com_Error( ERR_FATAL, "Z_VM_HeapAvailable received unknown tag %d", tag );
+	}
+
+	if ( !zone )
+		return 0;
+
+	return Z_AvailableZoneMemory( zone );
+}
+
+/*
+=================
+Z_VM_ShutdownHeap
+
+Clear reference to VM's zone
+=================
+*/
+void Z_VM_ShutdownHeap( int tag ) {
+	if ( tag == TAG_GAME ) {
+		vm_gamezone = NULL;
+	} else if ( tag == TAG_CGAME ) {
+		vm_cgamezone = NULL;
+	} else {
+		Com_Error( ERR_FATAL, "Z_VM_ShutdownHeap received unknown tag %d", tag );
+	}
+}
+
+/*
+===================================================================
+
+Dynamic array
+
+Mainly for handling arrays with element length set at run-time.
+
+===================================================================
+*/
+
+/*
+================
+DA_Init
+================
+*/
+#ifdef ZONE_DEBUG
+void DA_InitDebug( darray_t *darray, int maxElements, int elementLength, qboolean freeable, char *file, int line )
+#else
+void DA_Init( darray_t *darray, int maxElements, int elementLength, qboolean freeable )
+#endif
+{
+	assert( !darray->pointer );
+	assert( maxElements > 0 );
+	assert( elementLength > 0 );
+
+	// need to be able to manually free some arrays
+	if ( freeable ) {
+#ifdef ZONE_DEBUG
+		darray->pointer = Z_MallocDebug( maxElements * elementLength, "DA_Init", file, line );
+#else
+		darray->pointer = Z_Malloc( maxElements * elementLength );
+#endif
+	} else {
+		darray->pointer = Hunk_Alloc( maxElements * elementLength, h_high );
+	}
+
+	darray->freeable = freeable;
+	darray->maxElements = maxElements;
+	darray->elementLength = elementLength;
+
+	DA_Clear( darray );
+}
+
+/*
+================
+DA_Free
+================
+*/
+#ifdef ZONE_DEBUG
+void DA_FreeDebug( darray_t *darray, char *file, int line )
+#else
+void DA_Free( darray_t *darray )
+#endif
+{
+	if ( darray->pointer ) {
+		if ( darray->freeable ) {
+#ifdef ZONE_DEBUG
+			Z_FreeDebug( darray->pointer, "DA_Free", file, line );
+#else
+			Z_Free( darray->pointer );
+#endif
+		}
+		darray->pointer = NULL;
+	}
+
+	darray->maxElements = 0;
+	darray->elementLength = 0;
+}
+
+/*
+================
+DA_Clear
+================
+*/
+void DA_Clear( darray_t *darray ) {
+	if ( !darray->pointer )
+		return;
+
+	Com_Memset( darray->pointer, 0, darray->maxElements * darray->elementLength );
+}
+
+/*
+================
+DA_ClearElement
+================
+*/
+void DA_ClearElement( darray_t *darray, int num ) {
+	assert( darray->pointer );
+	assert( num < darray->maxElements );
+	assert( darray->elementLength > 0 );
+
+	if ( !darray->pointer )
+		return;
+
+	Com_Memset( (byte*)darray->pointer + num * darray->elementLength, 0, darray->elementLength );
+}
+
+/*
+================
+DA_Copy
+================
+*/
+void DA_Copy( const darray_t in, darray_t *out ) {
+	if ( !out )
+		return;
+
+	assert( in.elementLength == out->elementLength );
+	assert( in.maxElements == out->maxElements );
+
+	if ( !in.pointer || !out->pointer )
+		return;
+
+	Com_Memcpy( out->pointer, in.pointer, in.elementLength * in.maxElements );
+}
+
+/*
+================
+DA_SetElement
+================
+*/
+void DA_SetElement( darray_t *darray, int num, const void *data ) {
+	assert( darray->pointer );
+	assert( num < darray->maxElements );
+	assert( darray->elementLength > 0 );
+
+	if ( !darray->pointer )
+		return;
+
+	Com_Memcpy( (byte*)darray->pointer + num * darray->elementLength, data, darray->elementLength );
+}
+
+/*
+================
+DA_GetElement
+================
+*/
+void DA_GetElement( const darray_t darray, int num, void *data ) {
+	assert( darray.pointer );
+	assert( num < darray.maxElements );
+	assert( darray.elementLength > 0 );
+
+	Com_Memcpy( data, (byte*)darray.pointer + num * darray.elementLength, darray.elementLength );
+}
+
+/*
+================
+DA_ElementPointer
+================
+*/
+void *DA_ElementPointer( const darray_t darray, int num ) {
+	assert( darray.pointer );
+	assert( num >= 0 );
+	assert( num < darray.maxElements );
+	assert( darray.elementLength > 0 );
+
+	if ( !darray.pointer ) {
+		return NULL;
+	}
+
+	if (num < 0 || num >= darray.maxElements) {
+		return NULL;
+	}
+
+	return (byte*)darray.pointer + num * darray.elementLength;
 }
 
 /*
@@ -2216,28 +2564,32 @@ int Com_EventLoop( void ) {
 			return ev.evTime;
 		}
 
-
-		switch(ev.evType)
+		if (ev.evType >= SE_MOUSE && ev.evType <= SE_MOUSE_LAST)
+			CL_MouseEvent( ev.evType - SE_MOUSE, ev.evValue, ev.evValue2, ev.evTime );
+		else if (ev.evType >= SE_JOYSTICK_AXIS && ev.evType <= SE_JOYSTICK_AXIS_LAST)
+			CL_JoystickAxisEvent( ev.evType - SE_JOYSTICK_AXIS, ev.evValue, ev.evValue2, ev.evTime );
+		else if (ev.evType >= SE_JOYSTICK_BUTTON && ev.evType <= SE_JOYSTICK_BUTTON_LAST)
+			CL_JoystickButtonEvent( ev.evType - SE_JOYSTICK_BUTTON, ev.evValue, ev.evValue2, ev.evTime );
+		else if (ev.evType >= SE_JOYSTICK_HAT && ev.evType <= SE_JOYSTICK_HAT_LAST)
+			CL_JoystickHatEvent( ev.evType - SE_JOYSTICK_HAT, ev.evValue, ev.evValue2, ev.evTime );
+		else
 		{
-			case SE_KEY:
-				CL_KeyEvent( ev.evValue, ev.evValue2, ev.evTime );
-			break;
-			case SE_CHAR:
-				CL_CharEvent( ev.evValue );
-			break;
-			case SE_MOUSE:
-				CL_MouseEvent( ev.evValue, ev.evValue2, ev.evTime );
-			break;
-			case SE_JOYSTICK_AXIS:
-				CL_JoystickEvent( ev.evValue, ev.evValue2, ev.evTime );
-			break;
-			case SE_CONSOLE:
-				Cbuf_AddText( (char *)ev.evPtr );
-				Cbuf_AddText( "\n" );
-			break;
-			default:
-				Com_Error( ERR_FATAL, "Com_EventLoop: bad event type %i", ev.evType );
-			break;
+			switch(ev.evType)
+			{
+				case SE_KEY:
+					CL_KeyEvent( ev.evValue, ev.evValue2, ev.evTime );
+				break;
+				case SE_CHAR:
+					CL_CharEvent( ev.evValue );
+				break;
+				case SE_CONSOLE:
+					Cbuf_AddText( (char *)ev.evPtr );
+					Cbuf_AddText( "\n" );
+				break;
+				default:
+					Com_Error( ERR_FATAL, "Com_EventLoop: bad event type %i", ev.evType );
+				break;
+			}
 		}
 
 		// free any block data
@@ -2374,8 +2726,12 @@ void Com_ExecuteCfg(void)
 	if(!Com_SafeMode())
 	{
 		// skip the q3config.cfg and autoexec.cfg if "safe" is on the command line
-		Cbuf_ExecuteText(EXEC_NOW, "exec " Q3CONFIG_CFG "\n");
-		Cbuf_Execute();
+		// and only execute q3config.cfg if it exists in current fs_homepath + fs_gamedir
+		if (FS_FileExists(Q3CONFIG_CFG))
+		{
+			Cbuf_ExecuteText(EXEC_NOW, "exec " Q3CONFIG_CFG "\n");
+			Cbuf_Execute();
+		}
 		Cbuf_ExecuteText(EXEC_NOW, "exec autoexec.cfg\n");
 		Cbuf_Execute();
 	}
@@ -2389,7 +2745,7 @@ Change to a new mod properly with cleaning up cvars before switching.
 ==================
 */
 
-void Com_GameRestart(int checksumFeed, qboolean disconnect)
+void Com_GameRestart(qboolean disconnect)
 {
 	// make sure no recursion can be triggered
 	if(!com_gameRestarting && com_fullyInitialized)
@@ -2409,7 +2765,7 @@ void Com_GameRestart(int checksumFeed, qboolean disconnect)
 			CL_Shutdown("Game directory changed", disconnect, qfalse);
 		}
 
-		FS_Restart(checksumFeed);
+		FS_Restart(qtrue);
 	
 		// Clean out any user and VM created cvars
 		Cvar_Restart(qtrue);
@@ -2421,6 +2777,9 @@ void Com_GameRestart(int checksumFeed, qboolean disconnect)
 			// change was triggered by a connect to server because the
 			// new network settings might make the connection fail.
 			NET_Restart_f();
+
+			// switching from another game and not connection to a server
+			com_playVideo = 2;
 		}
 
 		if(com_gameClientRestarting)
@@ -2444,134 +2803,19 @@ Expose possibility to change current running mod to the user
 
 void Com_GameRestart_f(void)
 {
-	Cvar_Set("fs_game", Cmd_Argv(1));
+	const char *gamedir = Cmd_Argv(1);
 
-	Com_GameRestart(0, qtrue);
-}
-
-#ifndef STANDALONE
-
-// TTimo: centralizing the cl_cdkey stuff after I discovered a buffer overflow problem with the dedicated server version
-//   not sure it's necessary to have different defaults for regular and dedicated, but I don't want to risk it
-//   https://zerowing.idsoftware.com/bugzilla/show_bug.cgi?id=470
-#ifndef DEDICATED
-char	cl_cdkey[34] = "                                ";
-#else
-char	cl_cdkey[34] = "123456789";
-#endif
-
-/*
-=================
-Com_ReadCDKey
-=================
-*/
-qboolean CL_CDKeyValidate( const char *key, const char *checksum );
-void Com_ReadCDKey( const char *filename ) {
-	fileHandle_t	f;
-	char			buffer[33];
-	char			fbuffer[MAX_OSPATH];
-
-	Com_sprintf(fbuffer, sizeof(fbuffer), "%s/q3key", filename);
-
-	FS_SV_FOpenFileRead( fbuffer, &f );
-	if ( !f ) {
-		Q_strncpyz( cl_cdkey, "                ", 17 );
+	if (!*gamedir) {
+		Com_Printf("Usage: game_restart <game directory>\n");
 		return;
 	}
 
-	Com_Memset( buffer, 0, sizeof(buffer) );
+	Cvar_Set("fs_game", gamedir);
 
-	FS_Read( buffer, 16, f );
-	FS_FCloseFile( f );
-
-	if (CL_CDKeyValidate(buffer, NULL)) {
-		Q_strncpyz( cl_cdkey, buffer, 17 );
-	} else {
-		Q_strncpyz( cl_cdkey, "                ", 17 );
-	}
+	Com_GameRestart(qtrue);
 }
 
-/*
-=================
-Com_AppendCDKey
-=================
-*/
-void Com_AppendCDKey( const char *filename ) {
-	fileHandle_t	f;
-	char			buffer[33];
-	char			fbuffer[MAX_OSPATH];
-
-	Com_sprintf(fbuffer, sizeof(fbuffer), "%s/q3key", filename);
-
-	FS_SV_FOpenFileRead( fbuffer, &f );
-	if (!f) {
-		Q_strncpyz( &cl_cdkey[16], "                ", 17 );
-		return;
-	}
-
-	Com_Memset( buffer, 0, sizeof(buffer) );
-
-	FS_Read( buffer, 16, f );
-	FS_FCloseFile( f );
-
-	if (CL_CDKeyValidate(buffer, NULL)) {
-		strcat( &cl_cdkey[16], buffer );
-	} else {
-		Q_strncpyz( &cl_cdkey[16], "                ", 17 );
-	}
-}
-
-#ifndef DEDICATED
-/*
-=================
-Com_WriteCDKey
-=================
-*/
-static void Com_WriteCDKey( const char *filename, const char *ikey ) {
-	fileHandle_t	f;
-	char			fbuffer[MAX_OSPATH];
-	char			key[17];
-#if !defined(_WIN32) && !defined(__SWITCH__)
-	mode_t			savedumask;
-#endif
-
-
-	Com_sprintf(fbuffer, sizeof(fbuffer), "%s/q3key", filename);
-
-
-	Q_strncpyz( key, ikey, 17 );
-
-	if(!CL_CDKeyValidate(key, NULL) ) {
-		return;
-	}
-
-#if !defined(_WIN32) && !defined(__SWITCH__)
-	savedumask = umask(0077);
-#endif
-	f = FS_SV_FOpenFileWrite( fbuffer );
-	if ( !f ) {
-		Com_Printf ("Couldn't write CD key to %s.\n", fbuffer );
-		goto out;
-	}
-
-	FS_Write( key, 16, f );
-
-	FS_Printf( f, "\n// generated by quake, do not modify\r\n" );
-	FS_Printf( f, "// Do not give this file to ANYONE.\r\n" );
-	FS_Printf( f, "// id Software and Activision will NOT ask you to send this file to them.\r\n");
-
-	FS_FCloseFile( f );
-out:
-#if !defined(_WIN32) && !defined(__SWITCH__)
-	umask(savedumask);
-#else
-	;
-#endif
-}
-#endif
-
-#endif // STANDALONE
-
+#if idppc_altivec
 static void Com_DetectAltivec(void)
 {
 	// Only detect if user hasn't forcibly disabled it.
@@ -2588,6 +2832,7 @@ static void Com_DetectAltivec(void)
 		}
 	}
 }
+#endif
 
 /*
 =================
@@ -2699,10 +2944,14 @@ void Com_Init( char *commandLine ) {
 
 	// done early so bind command exists
 	CL_InitKeyCommands();
+	CL_InitJoyRemapCommands();
 
-	com_standalone = Cvar_Get("com_standalone", "0", CVAR_ROM);
-	com_basegame = Cvar_Get("com_basegame", BASEGAME, CVAR_INIT);
-	com_homepath = Cvar_Get("com_homepath", "", CVAR_INIT|CVAR_PROTECTED);
+	com_fs_pure = Cvar_Get ("fs_pure", "", CVAR_ROM);
+
+	com_homepath = Cvar_Get("com_homepath", HOMEPATH_NAME, CVAR_INIT|CVAR_PROTECTED);
+	if ( !com_homepath->string[0] ) {
+		Cvar_ForceReset( "com_homepath" );
+	}
 
 	FS_InitFilesystem ();
 
@@ -2729,11 +2978,10 @@ void Com_Init( char *commandLine ) {
 
   // get dedicated here for proper hunk megs initialization
 #ifdef DEDICATED
-	com_dedicated = Cvar_Get ("dedicated", "1", CVAR_INIT);
-	Cvar_CheckRange( com_dedicated, 1, 2, qtrue );
+	com_dedicated = Cvar_Get ("dedicated", "1", CVAR_ROM);
 #else
 	com_dedicated = Cvar_Get ("dedicated", "0", CVAR_LATCH);
-	Cvar_CheckRange( com_dedicated, 0, 2, qtrue );
+	Cvar_CheckRange( com_dedicated, 0, 1, qtrue );
 #endif
 	// allocate the stack based hunk allocator
 	Com_InitHunkMemory();
@@ -2745,9 +2993,11 @@ void Com_Init( char *commandLine ) {
 	//
 	// init commands and vars
 	//
+#if idppc_altivec
 	com_altivec = Cvar_Get ("com_altivec", "1", CVAR_ARCHIVE);
+#endif
 	com_maxfps = Cvar_Get ("com_maxfps", "85", CVAR_ARCHIVE);
-	com_blood = Cvar_Get ("com_blood", "1", CVAR_ARCHIVE);
+	com_singlePlayerActive = Cvar_Get ("ui_singlePlayerActive", "0", CVAR_SYSTEMINFO | CVAR_ROM);
 
 	com_logfile = Cvar_Get ("logfile", "0", CVAR_TEMP );
 
@@ -2775,13 +3025,19 @@ void Com_Init( char *commandLine ) {
 	com_busyWait = Cvar_Get("com_busyWait", "0", CVAR_ARCHIVE);
 	Cvar_Get("com_errorMessage", "", CVAR_ROM | CVAR_NORESTART);
 
-#ifdef CINEMATICS_INTRO
-	com_introPlayed = Cvar_Get( "com_introplayed", "0", CVAR_ARCHIVE);
-#endif
+	com_productName = Cvar_Get( "com_productName", PRODUCT_NAME, CVAR_ROM );
 
 	s = va("%s %s %s", Q3_VERSION, PLATFORM_STRING, PRODUCT_DATE );
 	com_version = Cvar_Get ("version", s, CVAR_ROM | CVAR_SERVERINFO );
-	com_gamename = Cvar_Get("com_gamename", GAMENAME_FOR_MASTER, CVAR_SERVERINFO | CVAR_INIT);
+
+	// version string without platform and no compile date if version includes git commit date and hash
+#ifdef PRODUCT_VERSION_HAS_DATE
+	Cvar_Get ("versionshort", PRODUCT_NAME " " PRODUCT_VERSION, CVAR_ROM );
+#else
+	Cvar_Get ("versionshort", PRODUCT_NAME " " PRODUCT_VERSION " " PRODUCT_DATE, CVAR_ROM );
+#endif
+
+	com_gamename = Cvar_Get("com_gamename", GAMENAME_FOR_MASTER, CVAR_SERVERINFO);
 	com_protocol = Cvar_Get("com_protocol", va("%i", PROTOCOL_VERSION), CVAR_SERVERINFO | CVAR_INIT);
 #ifdef LEGACY_PROTOCOL
 	com_legacyprotocol = Cvar_Get("com_legacyprotocol", va("%i", PROTOCOL_LEGACY_VERSION), CVAR_INIT);
@@ -2793,8 +3049,10 @@ void Com_Init( char *commandLine ) {
 #endif
 		Cvar_Get("protocol", com_protocol->string, CVAR_ROM);
 
+	com_demoext = Cvar_Get("com_demoext", DEMOEXT, 0);
+
 #ifndef DEDICATED
-	con_autochat = Cvar_Get("con_autochat", "1", CVAR_ARCHIVE);
+	con_autochat = Cvar_Get("con_autochat", "0", CVAR_ARCHIVE);
 #endif
 
 	Sys_Init();
@@ -2820,22 +3078,9 @@ void Com_Init( char *commandLine ) {
 
 	// add + commands from command line
 	if ( !Com_AddStartupCommands() ) {
-		// if the user didn't give any commands, run default action
-		if ( !com_dedicated->integer ) {
-#ifdef CINEMATICS_LOGO
-			Cbuf_AddText ("cinematic " CINEMATICS_LOGO "\n");
-#endif
-#ifdef CINEMATICS_INTRO
-			if( !com_introPlayed->integer ) {
-				Cvar_Set( com_introPlayed->name, "1" );
-				Cvar_Set( "nextmap", "cinematic " CINEMATICS_INTRO );
-			}
-#endif
-		}
+		// first fs_game, no startup arguments
+		com_playVideo = 1;
 	}
-
-	// start in full screen ui mode
-	Cvar_Set("r_uiFullScreen", "1");
 
 	CL_StartHunkUsers( qfalse );
 
@@ -2844,9 +3089,8 @@ void Com_Init( char *commandLine ) {
 
 	com_fullyInitialized = qtrue;
 
-	// always set the cvar, but only print the info if it makes sense.
+#if idppc_altivec
 	Com_DetectAltivec();
-#if idppc
 	Com_Printf ("Altivec support is %s\n", com_altivec->integer ? "enabled" : "disabled");
 #endif
 
@@ -2912,6 +3156,199 @@ void Com_ReadFromPipe( void )
 
 //==================================================================
 
+/*
+============
+Com_RefMalloc
+============
+*/
+#ifdef ZONE_DEBUG
+void *Com_RefMalloc( int size, char *label, char *file, int line ) {
+	return Z_TagMallocDebug( size, TAG_RENDERER, label, file, line );
+}
+
+void Com_RefFree( void *pointer, char *label, char *file, int line ) {
+	Z_FreeDebug( pointer, label, file, line );
+}
+#else
+void *Com_RefMalloc( int size ) {
+	return Z_TagMalloc( size, TAG_RENDERER );
+}
+
+void Com_RefFree( void *pointer ) {
+	Z_Free( pointer );
+}
+#endif
+
+int Com_ScaledMilliseconds(void) {
+	return Sys_Milliseconds()*com_timescale->value;
+}
+
+/*
+================
+Com_RefPrintf
+
+DLL glue
+================
+*/
+static __attribute__ ((format (printf, 2, 3))) void QDECL Com_RefPrintf( int print_level, const char *fmt, ...) {
+	va_list		argptr;
+	char		msg[MAXPRINTMSG];
+	
+	va_start (argptr,fmt);
+	Q_vsnprintf (msg, sizeof(msg), fmt, argptr);
+	va_end (argptr);
+
+	if ( print_level == PRINT_ALL ) {
+		Com_Printf ("%s", msg);
+	} else if ( print_level == PRINT_WARNING ) {
+		Com_Printf (S_COLOR_YELLOW "%s", msg);		// yellow
+	} else if ( print_level == PRINT_DEVELOPER ) {
+		Com_DPrintf (S_COLOR_RED "%s", msg);		// red
+	}
+}
+
+
+
+/*
+============
+Com_ShutdownRef
+============
+*/
+void Com_ShutdownRef( void ) {
+	int blocks;
+
+	if ( re.Shutdown ) {
+		re.Shutdown( qtrue );
+	}
+
+	Com_Memset( &re, 0, sizeof( re ) );
+
+	// check if ri.Malloc memory was freed
+	blocks = Z_FreeTags( TAG_RENDERER );
+	if ( blocks > 0 ) {
+		Com_Printf( S_COLOR_YELLOW "WARNING: Renderer did not free %d zone blocks\n", blocks );
+	}
+
+#ifdef USE_RENDERER_DLOPEN
+	if ( rendererLib ) {
+		Sys_UnloadLibrary( rendererLib );
+		rendererLib = NULL;
+	}
+#endif
+}
+
+/*
+============
+Com_InitRef
+============
+*/
+void SV_BotDrawDebugPolygons( void (*drawPoly)(int color, int numPoints, float *points) );
+
+void Com_InitRef( refimport_t *ri ) {
+	refexport_t	*ret;
+#ifdef USE_RENDERER_DLOPEN
+	GetRefAPI_t		GetRefAPI;
+	char			dllName[MAX_OSPATH];
+#endif
+
+#ifndef DEDICATED
+	Com_Printf( "----- Initializing Renderer ----\n" );
+#endif
+
+#ifdef USE_RENDERER_DLOPEN
+	com_renderer = Cvar_Get("com_renderer", "opengl1", CVAR_ARCHIVE | CVAR_LATCH);
+
+	if ( com_abnormalExit->integer ) {
+		Cvar_ForceReset( "com_renderer" );
+	}
+
+	Com_sprintf(dllName, sizeof(dllName), RENDERER_PREFIX "%s_" ARCH_STRING DLL_EXT, com_renderer->string);
+
+	if(!(rendererLib = Sys_LoadDll(dllName, qfalse)) && strcmp(com_renderer->string, com_renderer->resetString))
+	{
+		Com_Printf("failed:\n\"%s\"\n", Sys_LibraryError());
+		Cvar_ForceReset("com_renderer");
+
+		Com_sprintf(dllName, sizeof(dllName), RENDERER_PREFIX "opengl1_" ARCH_STRING DLL_EXT);
+		rendererLib = Sys_LoadDll(dllName, qfalse);
+	}
+
+	if(!rendererLib)
+	{
+		Com_Printf("failed:\n\"%s\"\n", Sys_LibraryError());
+		Com_Error(ERR_FATAL, "Failed to load renderer");
+	}
+
+	GetRefAPI = Sys_LoadFunction(rendererLib, "GetRefAPI");
+	if(!GetRefAPI)
+	{
+		Com_Error(ERR_FATAL, "Can't load symbol GetRefAPI: '%s'",  Sys_LibraryError());
+	}
+#endif
+
+	ri->Cmd_AddCommand = Cmd_AddCommand;
+	ri->Cmd_RemoveCommand = Cmd_RemoveCommand;
+	ri->Cmd_Argc = Cmd_Argc;
+	ri->Cmd_Argv = Cmd_Argv;
+	ri->Cmd_ExecuteText = Cbuf_ExecuteText;
+	ri->Printf = Com_RefPrintf;
+	ri->Error = Com_Error;
+	ri->Milliseconds = Com_ScaledMilliseconds;
+#ifdef ZONE_DEBUG
+	ri->MallocDebug = Com_RefMalloc;
+	ri->FreeDebug = Com_RefFree;
+#else
+	ri->Malloc = Com_RefMalloc;
+	ri->Free = Com_RefFree;
+#endif
+#ifdef HUNK_DEBUG
+	ri->Hunk_AllocDebug = Hunk_AllocDebug;
+#else
+	ri->Hunk_Alloc = Hunk_Alloc;
+#endif
+	ri->Hunk_AllocateTempMemory = Hunk_AllocateTempMemory;
+	ri->Hunk_FreeTempMemory = Hunk_FreeTempMemory;
+
+	ri->CM_ClusterPVS = CM_ClusterPVS;
+	ri->CM_DrawDebugSurface = CM_DrawDebugSurface;
+	ri->SV_BotDrawDebugPolygons = SV_BotDrawDebugPolygons;
+
+	ri->FS_ReadFile = FS_ReadFile;
+	ri->FS_FreeFile = FS_FreeFile;
+	ri->FS_WriteFile = FS_WriteFile;
+	ri->FS_FreeFileList = FS_FreeFileList;
+	ri->FS_ListFiles = FS_ListFiles;
+	ri->FS_FileExists = FS_FileExists;
+	ri->Cvar_Get = Cvar_Get;
+	ri->Cvar_Set = Cvar_Set;
+	ri->Cvar_SetValue = Cvar_SetValue;
+	ri->Cvar_CheckRange = Cvar_CheckRange;
+	ri->Cvar_SetDescription = Cvar_SetDescription;
+	ri->Cvar_VariableIntegerValue = Cvar_VariableIntegerValue;
+	ri->Cvar_VariableStringBuffer = Cvar_VariableStringBuffer;
+
+	ri->ftol = Q_ftol;
+
+	ri->Sys_SetEnv = Sys_SetEnv;
+	ri->Sys_LowPhysicalMemory = Sys_LowPhysicalMemory;
+
+#ifdef DEDICATED
+	ret = GetRefAPI( REF_API_VERSION, ri, qtrue );
+#else
+	ret = GetRefAPI( REF_API_VERSION, ri, qfalse );
+
+	Com_Printf( "-------------------------------\n");
+#endif
+
+	if ( !ret ) {
+		Com_Error (ERR_FATAL, "Couldn't initialize refresh" );
+	}
+
+	re = *ret;
+}
+
+//==================================================================
+
 void Com_WriteConfigToFile( const char *filename ) {
 	fileHandle_t	f;
 
@@ -2921,7 +3358,7 @@ void Com_WriteConfigToFile( const char *filename ) {
 		return;
 	}
 
-	FS_Printf (f, "// generated by quake, do not modify\n");
+	FS_Printf (f, "// Generated by " PRODUCT_NAME ", do not modify\n");
 	Key_WriteBindings (f);
 	Cvar_WriteVariables (f);
 	FS_FCloseFile( f );
@@ -2948,20 +3385,6 @@ void Com_WriteConfiguration( void ) {
 	cvar_modifiedFlags &= ~CVAR_ARCHIVE;
 
 	Com_WriteConfigToFile( Q3CONFIG_CFG );
-
-	// not needed for dedicated or standalone
-#if !defined(DEDICATED) && !defined(STANDALONE)
-	if(!com_standalone->integer)
-	{
-		const char *gamedir;
-		gamedir = Cvar_VariableString( "fs_game" );
-		if (UI_usesUniqueCDKey() && gamedir[0] != 0) {
-			Com_WriteCDKey( gamedir, &cl_cdkey[16] );
-		} else {
-			Com_WriteCDKey( BASEGAME, cl_cdkey );
-		}
-	}
-#endif
 }
 
 
@@ -3017,24 +3440,25 @@ int Com_ModifyMsec( int msec ) {
 		msec = 1;
 	}
 
-	if ( com_dedicated->integer ) {
-		// dedicated servers don't want to clamp for a much longer
-		// period, because it would mess up all the client's views
-		// of time.
-		if (com_sv_running->integer && msec > 500)
-			Com_Printf( "Hitch warning: %i msec frame time\n", msec );
-
-		clampTime = 5000;
-	} else 
-	if ( !com_sv_running->integer ) {
-		// clients of remote servers do not want to clamp time, because
-		// it would skew their view of the server's time temporarily
-		clampTime = 5000;
-	} else {
+	// ZTM: FIXME: Running non-dedicated network server on client should
+	//             use longer clamp time, but loading renderer causes
+	//             running too many server frames initially.
+	if ( com_sv_running->integer && !com_dedicated->integer ) {
 		// for local single player gaming
 		// we may want to clamp the time to prevent players from
 		// flying off edges when something hitches.
 		clampTime = 200;
+	} else {
+		// servers don't want to clamp for a much longer period,
+		// because it would mess up all the client's views of time.
+
+		// clients of remote servers do not want to clamp time, because
+		// it would skew their view of the server's time temporarily
+
+		if ( ( ( com_sv_running->integer && com_dedicated->integer ) || com_developer->integer ) && msec > 500 )
+			Com_Printf( "Hitch warning: %i msec frame time\n", msec );
+
+		clampTime = 5000;
 	}
 
 	if ( msec > clampTime ) {
@@ -3161,11 +3585,13 @@ void Com_Frame( void ) {
 
 	Cbuf_Execute ();
 
+#if idppc_altivec
 	if (com_altivec->modified)
 	{
 		Com_DetectAltivec();
 		com_altivec->modified = qfalse;
 	}
+#endif
 
 	// mess with msec if needed
 	msec = Com_ModifyMsec(msec);
@@ -3290,6 +3716,7 @@ void Com_Shutdown (void) {
 		FS_HomeRemove( com_pipefile->string );
 	}
 
+	BSP_Shutdown();
 }
 
 /*
@@ -3310,6 +3737,7 @@ void Field_Clear( field_t *edit ) {
 }
 
 static const char *completionString;
+static char matchDisplayPrefix[MAX_TOKEN_CHARS];
 static char shortestMatch[MAX_TOKEN_CHARS];
 static int	matchCount;
 // field we are working on, passed to Field_AutoComplete(&g_consoleCommand for instance)
@@ -3321,8 +3749,12 @@ FindMatches
 
 ===============
 */
-static void FindMatches( const char *s ) {
+static void FindMatches( const char *match ) {
 	int		i;
+	char	s[MAX_TOKEN_CHARS];
+
+	Q_strncpyz( s, matchDisplayPrefix, sizeof( s ) );
+	Q_strcat( s, sizeof( s ), match );
 
 	if ( Q_stricmpn( s, completionString, strlen( completionString ) ) ) {
 		return;
@@ -3352,7 +3784,12 @@ PrintMatches
 
 ===============
 */
-static void PrintMatches( const char *s ) {
+static void PrintMatches( const char *match ) {
+	char s[MAX_TOKEN_CHARS];
+
+	Q_strncpyz( s, matchDisplayPrefix, sizeof( s ) );
+	Q_strcat( s, sizeof( s ), match );
+
 	if ( !Q_stricmpn( s, shortestMatch, strlen( shortestMatch ) ) ) {
 		Com_Printf( "    %s\n", s );
 	}
@@ -3364,8 +3801,12 @@ PrintCvarMatches
 
 ===============
 */
-static void PrintCvarMatches( const char *s ) {
+static void PrintCvarMatches( const char *match ) {
 	char value[ TRUNCATE_LENGTH ];
+	char s[MAX_TOKEN_CHARS];
+
+	Q_strncpyz( s, matchDisplayPrefix, sizeof( s ) );
+	Q_strcat( s, sizeof( s ), match );
 
 	if ( !Q_stricmpn( s, shortestMatch, strlen( shortestMatch ) ) ) {
 		Com_TruncateLongString( value, Cvar_VariableString( s ) );
@@ -3432,6 +3873,7 @@ void Field_CompleteKeyname( void )
 {
 	matchCount = 0;
 	shortestMatch[ 0 ] = 0;
+	matchDisplayPrefix[ 0 ] = 0;
 
 	Key_KeynameCompletion( FindMatches );
 
@@ -3445,16 +3887,49 @@ void Field_CompleteKeyname( void )
 Field_CompleteFilename
 ===============
 */
-void Field_CompleteFilename( const char *dir,
+void Field_CompleteFilename( const char *basedir,
 		const char *ext, qboolean stripExt, qboolean allowNonPureFilesOnDisk )
 {
+	char dir[MAX_TOKEN_CHARS];
+	char **pFiles;
+	int nFiles, i, length;
+
 	matchCount = 0;
 	shortestMatch[ 0 ] = 0;
+	matchDisplayPrefix[ 0 ] = 0;
 
-	FS_FilenameCompletion( dir, ext, stripExt, FindMatches, allowNonPureFilesOnDisk );
+	// search in basedir + / + directory typed so far but always have
+	// completion display directory typed so far
+	Q_strncpyz( dir, basedir, sizeof( dir ) );
+
+	if ( strchr( completionString, '/' ) != NULL ) {
+		Q_strncpyz( matchDisplayPrefix, completionString, sizeof( matchDisplayPrefix ) );
+
+		// get dirname with trailing slash
+		for ( i = strlen( matchDisplayPrefix ) - 1; i >= 0; i-- ) {
+			if ( matchDisplayPrefix[i] == '/' ) {
+				matchDisplayPrefix[i+1] = '\0';
+				break;
+			}
+		}
+	}
+
+	if ( matchDisplayPrefix[0] ) {
+		length = strlen( dir );
+		if ( length > 0 && dir[length-1] != '/' ) {
+			Q_strcat( dir, sizeof( dir ), "/" );
+		}
+		Q_strcat( dir, sizeof( dir ), matchDisplayPrefix );
+	}
+
+	pFiles = FS_GetFileList( dir, ext, &nFiles, allowNonPureFilesOnDisk );
+
+	FS_FilenameCompletion( pFiles, nFiles, stripExt, FindMatches, allowNonPureFilesOnDisk );
 
 	if( !Field_Complete( ) )
-		FS_FilenameCompletion( dir, ext, stripExt, PrintMatches, allowNonPureFilesOnDisk );
+		FS_FilenameCompletion( pFiles, nFiles, stripExt, PrintMatches, allowNonPureFilesOnDisk );
+
+	FS_FreeFileList( pFiles );
 }
 
 /*
@@ -3462,10 +3937,16 @@ void Field_CompleteFilename( const char *dir,
 Field_CompleteCommand
 ===============
 */
-void Field_CompleteCommand( char *cmd,
+void Field_CompleteCommand( const char *_cmd,
 		qboolean doCommands, qboolean doCvars )
 {
+	char	buffer[ BIG_INFO_STRING ], *cmd;
 	int		completionArgument = 0;
+
+	// _cmd shouldn't ever be changed but it's too much work to const-ify
+	// every where it goes so make a local copy
+	Q_strncpyz( buffer, _cmd, sizeof ( buffer ) );
+	cmd = buffer;
 
 	// Skip leading whitespace and quotes
 	cmd = Com_SkipCharset( cmd, " \"" );
@@ -3527,6 +4008,7 @@ void Field_CompleteCommand( char *cmd,
 
 		matchCount = 0;
 		shortestMatch[ 0 ] = 0;
+		matchDisplayPrefix[ 0 ] = 0;
 
 		if( strlen( completionString ) == 0 )
 			return;
@@ -3547,6 +4029,51 @@ void Field_CompleteCommand( char *cmd,
 				Cvar_CommandCompletion( PrintCvarMatches );
 		}
 	}
+}
+
+/*
+============
+Field_ListCompletion
+============
+*/
+static void Field_ListCompletion( const char *list, void(*callback)(const char *s) ) {
+	const char *itemname;
+
+	itemname = list;
+
+	while ( 1 ) {
+		if (itemname[0] == '\0')
+			break;
+
+		callback(itemname);
+
+		itemname += strlen(itemname) + 1;
+	}
+}
+
+/*
+===============
+Field_CompleteList
+
+List items are 0-byte terminated with an additonal 0-byte at the end of the list
+
+Example: "hello\0world\0"
+C-strings have an implicit trailing 0-byte so the memory is actually hello\0world\0\0
+===============
+*/
+void Field_CompleteList( const char *list )
+{
+	matchCount = 0;
+	shortestMatch[ 0 ] = 0;
+	matchDisplayPrefix[ 0 ] = 0;
+
+	if ( !list )
+		return;
+
+	Field_ListCompletion( list, FindMatches );
+
+	if( !Field_Complete( ) )
+		Field_ListCompletion( list, PrintMatches );
 }
 
 /*
@@ -3587,14 +4114,14 @@ void Com_RandomBytes( byte *string, int len )
 ==================
 Com_IsVoipTarget
 
-Returns non-zero if given clientNum is enabled in voipTargets, zero otherwise.
-If clientNum is negative return if any bit is set.
+Returns non-zero if given playerNum is enabled in voipTargets, zero otherwise.
+If playerNum is negative return if any bit is set.
 ==================
 */
-qboolean Com_IsVoipTarget(uint8_t *voipTargets, int voipTargetsSize, int clientNum)
+qboolean Com_IsVoipTarget(uint8_t *voipTargets, int voipTargetsSize, int playerNum)
 {
 	int index;
-	if(clientNum < 0)
+	if(playerNum < 0)
 	{
 		for(index = 0; index < voipTargetsSize; index++)
 		{
@@ -3605,184 +4132,19 @@ qboolean Com_IsVoipTarget(uint8_t *voipTargets, int voipTargetsSize, int clientN
 		return qfalse;
 	}
 
-	index = clientNum >> 3;
+	index = playerNum >> 3;
 	
 	if(index < voipTargetsSize)
-		return (voipTargets[index] & (1 << (clientNum & 0x07)));
+		return (voipTargets[index] & (1 << (playerNum & 0x07)));
 
 	return qfalse;
 }
 
 /*
-===============
-Field_CompletePlayerName
-===============
+====================
+Com_GameIsSinglePlayer
+====================
 */
-static qboolean Field_CompletePlayerNameFinal( qboolean whitespace )
-{
-	int completionOffset;
-
-	if( matchCount == 0 )
-		return qtrue;
-
-	completionOffset = strlen( completionField->buffer ) - strlen( completionString );
-
-	Q_strncpyz( &completionField->buffer[ completionOffset ], shortestMatch,
-		sizeof( completionField->buffer ) - completionOffset );
-
-	completionField->cursor = strlen( completionField->buffer );
-
-	if( matchCount == 1 && whitespace )
-	{
-		Q_strcat( completionField->buffer, sizeof( completionField->buffer ), " " );
-		completionField->cursor++;
-		return qtrue;
-	}
-
-	return qfalse;
-}
-
-static void Name_PlayerNameCompletion( const char **names, int nameCount, void(*callback)(const char *s) ) 
-{
-	int i;
-
-	for( i = 0; i < nameCount; i++ ) {
-		callback( names[ i ] );
-	}
-}
-
-qboolean Com_FieldStringToPlayerName( char *name, int length, const char *rawname )
-{
-	char		hex[5];
-	int			i;
-	int			ch;
-
-	if( name == NULL || rawname == NULL )
-		return qfalse;
-
-	if( length <= 0 )
-		return qtrue;
-
-	for( i = 0; *rawname && i + 1 <= length; rawname++, i++ ) {
-		if( *rawname == '\\' ) {
-			Q_strncpyz( hex, rawname + 1, sizeof(hex) );
-			ch = Com_HexStrToInt( hex );
-			if( ch > -1 ) {
-				name[i] = ch;
-				rawname += 4; //hex string length, 0xXX
-			} else {
-				name[i] = *rawname;
-			}
-		} else {
-			name[i] = *rawname;
-		}
-	}
-	name[i] = '\0';
-
-	return qtrue;
-}
-
-qboolean Com_PlayerNameToFieldString( char *str, int length, const char *name )
-{
-	const char *p;
-	int i;
-	int x1, x2;
-
-	if( str == NULL || name == NULL )
-		return qfalse;
-
-	if( length <= 0 )
-		return qtrue;
-
-	*str = '\0';
-	p = name;
-
-	for( i = 0; *p != '\0'; i++, p++ )
-	{
-		if( i + 1 >= length )
-			break;
-
-		if( *p <= ' ' )
-		{
-			if( i + 5 + 1 >= length )
-				break;
-
-			x1 = *p >> 4;
-			x2 = *p & 15;
-
-			str[i+0] = '\\';
-			str[i+1] = '0';
-			str[i+2] = 'x';
-			str[i+3] = x1 > 9 ? x1 - 10 + 'a' : x1 + '0';
-			str[i+4] = x2 > 9 ? x2 - 10 + 'a' : x2 + '0';
-
-			i += 4;
-		} else {
-			str[i] = *p;
-		}		
-	}
-	str[i] = '\0';
-
-	return qtrue;
-}
-
-void Field_CompletePlayerName( const char **names, int nameCount )
-{
-	qboolean whitespace;
-
-	matchCount = 0;
-	shortestMatch[ 0 ] = 0;
-
-	if( nameCount <= 0 )
-		return;
-
-	Name_PlayerNameCompletion( names, nameCount, FindMatches );
-
-	if( completionString[0] == '\0' )
-	{
-		Com_PlayerNameToFieldString( shortestMatch, sizeof( shortestMatch ), names[ 0 ] );
-	}
-
-	//allow to tab player names
-	//if full player name switch to next player name
-	if( completionString[0] != '\0'
-		&& Q_stricmp( shortestMatch, completionString ) == 0 
-		&& nameCount > 1 ) 
-	{
-		int i;
-
-		for( i = 0; i < nameCount; i++ ) {
-			if( Q_stricmp( names[ i ], completionString ) == 0 ) 
-			{
-				i++;
-				if( i >= nameCount )
-				{
-					i = 0;
-				}
-
-				Com_PlayerNameToFieldString( shortestMatch, sizeof( shortestMatch ), names[ i ] );
-				break;
-			}
-		}
-	}
-
-	if( matchCount > 1 )
-	{
-		Com_Printf( "]%s\n", completionField->buffer );
-		
-		Name_PlayerNameCompletion( names, nameCount, PrintMatches );
-	}
-
-	whitespace = nameCount == 1? qtrue: qfalse;
-	if( !Field_CompletePlayerNameFinal( whitespace ) )
-	{
-
-	}
-}
-
-int QDECL Com_strCompare( const void *a, const void *b )
-{
-    const char **pa = (const char **)a;
-    const char **pb = (const char **)b;
-    return strcmp( *pa, *pb );
+qboolean Com_GameIsSinglePlayer( void ) {
+	return ( com_singlePlayerActive->integer );
 }

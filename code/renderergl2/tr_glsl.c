@@ -2,21 +2,29 @@
 ===========================================================================
 Copyright (C) 2006-2009 Robert Beckebans <trebor_7@users.sourceforge.net>
 
-This file is part of XreaL source code.
+This file is part of Spearmint Source Code.
 
-XreaL source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-XreaL source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with XreaL source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 // tr_glsl.c
@@ -90,6 +98,7 @@ static uniformInfo_t uniformsInfo[] =
 
 	{ "u_DiffuseTexMatrix",  GLSL_VEC4 },
 	{ "u_DiffuseTexOffTurb", GLSL_VEC4 },
+	{ "u_Texture1Env",       GLSL_INT },
 
 	{ "u_TCGen0",        GLSL_INT },
 	{ "u_TCGen0Vector0", GLSL_VEC3 },
@@ -150,6 +159,17 @@ static uniformInfo_t uniformsInfo[] =
 	{ "u_AlphaTest", GLSL_INT },
 
 	{ "u_BoneMatrix", GLSL_MAT16_BONEMATRIX },
+
+	// new in spearmint
+	{ "u_AlphaTestRef", GLSL_FLOAT },
+
+	{ "u_Intensity", GLSL_FLOAT },
+	{ "u_DiffuseColor", GLSL_VEC3 },
+	{ "u_FogType", GLSL_INT },
+
+	{ "u_FireRiseDir", GLSL_VEC3 },
+	{ "u_ZFadeLowest", GLSL_FLOAT },
+	{ "u_ZFadeHighest", GLSL_FLOAT },
 };
 
 typedef enum
@@ -310,28 +330,75 @@ static void GLSL_GetShaderHeader( GLenum shaderType, const GLchar *extra, char *
 						"#define TCGEN_ENVIRONMENT_MAPPED %i\n"
 						"#define TCGEN_FOG %i\n"
 						"#define TCGEN_VECTOR %i\n"
+						"#define TCGEN_ENVIRONMENT_CELSHADE_MAPPED %i\n"
 						"#endif\n",
 						TCGEN_LIGHTMAP,
 						TCGEN_TEXTURE,
 						TCGEN_ENVIRONMENT_MAPPED,
 						TCGEN_FOG,
-						TCGEN_VECTOR));
+						TCGEN_VECTOR,
+						TCGEN_ENVIRONMENT_CELSHADE_MAPPED));
 
 	Q_strcat(dest, size,
 					 va("#ifndef colorGen_t\n"
 						"#define colorGen_t\n"
 						"#define CGEN_LIGHTING_DIFFUSE %i\n"
+						"#define CGEN_LIGHTING_DIFFUSE_ENTITY %i\n"
 						"#endif\n",
-						CGEN_LIGHTING_DIFFUSE));
+						CGEN_LIGHTING_DIFFUSE,
+						CGEN_LIGHTING_DIFFUSE_ENTITY));
 
 	Q_strcat(dest, size,
 							 va("#ifndef alphaGen_t\n"
 								"#define alphaGen_t\n"
 								"#define AGEN_LIGHTING_SPECULAR %i\n"
 								"#define AGEN_PORTAL %i\n"
+								"#define AGEN_NORMALZFADE %i\n"
 								"#endif\n",
 								AGEN_LIGHTING_SPECULAR,
-								AGEN_PORTAL));
+								AGEN_PORTAL,
+								AGEN_NORMALZFADE));
+
+	Q_strcat(dest, size,
+							 va("#ifndef texenv_t\n"
+								"#define texenv_t\n"
+								"#define TEXENV_MODULATE %i\n"
+								"#define TEXENV_ADD %i\n"
+								"#define TEXENV_REPLACE %i\n"
+								"#endif\n",
+								GL_MODULATE,
+								GL_ADD,
+								GL_REPLACE));
+
+	Q_strcat(dest, size,
+							 va("#ifndef fogType_t\n"
+								"#define fogType_t\n"
+								"#define FT_NONE %i\n"
+								"#define FT_EXP %i\n"
+								"#define FT_LINEAR %i\n"
+								"#endif\n",
+								FT_NONE,
+								FT_EXP,
+								FT_LINEAR));
+
+	Q_strcat(dest, size,
+							 va("#ifndef alphaTest_t\n"
+								"#define alphaTest_t\n"
+								"#define U_ATEST_NONE %i\n"
+								"#define U_ATEST_EQUAL %i\n"
+								"#define U_ATEST_GREATEREQUAL %i\n"
+								"#define U_ATEST_LESS %i\n"
+								"#define U_ATEST_LESSEQUAL %i\n"
+								"#define U_ATEST_NOTEQUAL %i\n"
+								"#define U_ATEST_GREATER %i\n"
+								"#endif\n",
+								U_ATEST_NONE,
+								U_ATEST_EQUAL,
+								U_ATEST_GREATEREQUAL,
+								U_ATEST_LESS,
+								U_ATEST_LESSEQUAL,
+								U_ATEST_NOTEQUAL,
+								U_ATEST_GREATER));
 
 	fbufWidthScale = 1.0f / ((float)glConfig.vidWidth);
 	fbufHeightScale = 1.0f / ((float)glConfig.vidHeight);
@@ -921,7 +988,7 @@ void GLSL_InitGPUShaders(void)
 	int attribs;
 	int numGenShaders = 0, numLightShaders = 0, numEtcShaders = 0;
 
-	ri.Printf(PRINT_ALL, "------- GLSL_InitGPUShaders -------\n");
+	ri.Printf(PRINT_DEVELOPER, "------- GLSL_InitGPUShaders -------\n");
 
 	R_IssuePendingRenderCommands();
 
@@ -963,6 +1030,9 @@ void GLSL_InitGPUShaders(void)
 
 		if (i & GENERICDEF_USE_RGBAGEN)
 			Q_strcat(extradefines, 1024, "#define USE_RGBAGEN\n");
+
+		if (i & GENERICDEF_USE_LIGHTMAP)
+			Q_strcat(extradefines, 1024, "#define USE_LIGHTMAP\n");
 
 		if (!GLSL_InitGPUShader(&tr.genericShader[i], "generic", attribs, qtrue, extradefines, qtrue, fallbackShader_generic_vp, fallbackShader_generic_fp))
 		{
@@ -1122,11 +1192,6 @@ void GLSL_InitGPUShaders(void)
 					Q_strcat(extradefines, 1024, "#define USE_PARALLAXMAP\n");
 					if (r_parallaxMapping->integer > 1)
 						Q_strcat(extradefines, 1024, "#define USE_RELIEFMAP\n");
-
-					if (r_parallaxMapShadows->integer)
-						Q_strcat(extradefines, 1024, "#define USE_PARALLAXMAP_SHADOWS\n");
-
-					Q_strcat(extradefines, 1024, va("#define r_parallaxMapOffset %f\n", r_parallaxMapOffset->value));
 				}
 			}
 
@@ -1134,15 +1199,9 @@ void GLSL_InitGPUShaders(void)
 				Q_strcat(extradefines, 1024, "#define USE_SPECULARMAP\n");
 
 			if (r_cubeMapping->integer)
-			{
 				Q_strcat(extradefines, 1024, "#define USE_CUBEMAP\n");
-				if (r_cubeMapping->integer == 2)
-					Q_strcat(extradefines, 1024, "#define USE_BOX_CUBEMAP_PARALLAX\n");
-			}
 			else if (r_deluxeSpecular->value > 0.000001f)
-			{
 				Q_strcat(extradefines, 1024, va("#define r_deluxeSpecular %f\n", r_deluxeSpecular->value));
-			}
 
 			switch (r_glossType->integer)
 			{
@@ -1445,7 +1504,7 @@ void GLSL_InitGPUShaders(void)
 
 	endTime = ri.Milliseconds();
 
-	ri.Printf(PRINT_ALL, "loaded %i GLSL shaders (%i gen %i light %i etc) in %5.2f seconds\n", 
+	ri.Printf(PRINT_DEVELOPER, "loaded %i GLSL shaders (%i gen %i light %i etc) in %5.2f seconds\n", 
 		numGenShaders + numLightShaders + numEtcShaders, numGenShaders, numLightShaders, 
 		numEtcShaders, (endTime - startTime) / 1000.0);
 }
@@ -1454,7 +1513,7 @@ void GLSL_ShutdownGPUShaders(void)
 {
 	int i;
 
-	ri.Printf(PRINT_ALL, "------- GLSL_ShutdownGPUShaders -------\n");
+	ri.Printf(PRINT_DEVELOPER, "------- GLSL_ShutdownGPUShaders -------\n");
 
 	for (i = 0; i < ATTR_INDEX_COUNT; i++)
 		qglDisableVertexAttribArray(i);
@@ -1510,19 +1569,25 @@ void GLSL_BindProgram(shaderProgram_t * program)
 }
 
 
-shaderProgram_t *GLSL_GetGenericShaderProgram(int stage)
+shaderProgram_t *GLSL_GetGenericShaderProgram(int stage, fogType_t fogType)
 {
 	shaderStage_t *pStage = tess.xstages[stage];
 	int shaderAttribs = 0;
 
-	if (tess.fogNum && pStage->adjustColorsForFog)
+	if (tess.fogNum && fogType != FT_NONE && pStage->adjustColorsForFog)
 	{
 		shaderAttribs |= GENERICDEF_USE_FOG;
+	}
+
+	if (pStage->bundle[1].image[0] && pStage->multitextureEnv)
+	{
+		shaderAttribs |= GENERICDEF_USE_LIGHTMAP;
 	}
 
 	switch (pStage->rgbGen)
 	{
 		case CGEN_LIGHTING_DIFFUSE:
+		case CGEN_LIGHTING_DIFFUSE_ENTITY:
 			shaderAttribs |= GENERICDEF_USE_RGBAGEN;
 			break;
 		default:
@@ -1533,6 +1598,7 @@ shaderProgram_t *GLSL_GetGenericShaderProgram(int stage)
 	{
 		case AGEN_LIGHTING_SPECULAR:
 		case AGEN_PORTAL:
+		case AGEN_NORMALZFADE:
 			shaderAttribs |= GENERICDEF_USE_RGBAGEN;
 			break;
 		default:

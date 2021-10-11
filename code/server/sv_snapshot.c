@@ -1,27 +1,56 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 
 #include "server.h"
 
+/*
+=============
+SV_SnapshotEntity
+
+Get pointer to beginning of entity state.
+=============
+*/
+sharedEntityState_t *SV_SnapshotEntity( int num ) {
+	return DA_ElementPointer( svs.snapshotEntities, num % svs.numSnapshotEntities );
+}
+
+/*
+=============
+SV_SnapshotPlayer
+
+Get pointer to beginning of player state.
+=============
+*/
+sharedPlayerState_t *SV_SnapshotPlayer( clientSnapshot_t *snap, int num ) {
+	return DA_ElementPointer( snap->playerStates, num );
+}
 
 /*
 =============================================================================
@@ -39,7 +68,9 @@ A normal server packet will look like:
 1	snapFlags
 1	areaBytes
 <areabytes>
-<playerstate>
+1   number of player states
+8	localPlayerIndex and playerNum for each of MAX_SPLITVIEW
+<playerstates>
 <packetentities>
 
 =============================================================================
@@ -53,7 +84,7 @@ Writes a delta update of an entityState_t list to the message.
 =============
 */
 static void SV_EmitPacketEntities( clientSnapshot_t *from, clientSnapshot_t *to, msg_t *msg ) {
-	entityState_t	*oldent, *newent;
+	sharedEntityState_t	*oldent, *newent;
 	int		oldindex, newindex;
 	int		oldnum, newnum;
 	int		from_num_entities;
@@ -73,14 +104,14 @@ static void SV_EmitPacketEntities( clientSnapshot_t *from, clientSnapshot_t *to,
 		if ( newindex >= to->num_entities ) {
 			newnum = 9999;
 		} else {
-			newent = &svs.snapshotEntities[(to->first_entity+newindex) % svs.numSnapshotEntities];
+			newent = SV_SnapshotEntity( to->first_entity + newindex );
 			newnum = newent->number;
 		}
 
 		if ( oldindex >= from_num_entities ) {
 			oldnum = 9999;
 		} else {
-			oldent = &svs.snapshotEntities[(from->first_entity+oldindex) % svs.numSnapshotEntities];
+			oldent = SV_SnapshotEntity( from->first_entity + oldindex );
 			oldnum = oldent->number;
 		}
 
@@ -96,7 +127,7 @@ static void SV_EmitPacketEntities( clientSnapshot_t *from, clientSnapshot_t *to,
 
 		if ( newnum < oldnum ) {
 			// this is a new entity, send it from the baseline
-			MSG_WriteDeltaEntity (msg, &sv.svEntities[newnum].baseline, newent, qtrue );
+			MSG_WriteDeltaEntity (msg, DA_ElementPointer( sv.svEntitiesBaseline, newnum ), newent, qtrue );
 			newindex++;
 			continue;
 		}
@@ -128,6 +159,11 @@ static void SV_WriteSnapshotToClient( client_t *client, msg_t *msg ) {
 	// this is the snapshot we are creating
 	frame = &client->frames[ client->netchan.outgoingSequence & PACKET_MASK ];
 
+	// snapshot wasn't ever built
+	if ( !frame->playerStates.pointer ) {
+		return;
+	}
+
 	// try to use a previous frame as the source for delta compressing the snapshot
 	if ( client->deltaMessage <= 0 || client->state != CS_ACTIVE ) {
 		// client is asking for a retransmit
@@ -136,7 +172,7 @@ static void SV_WriteSnapshotToClient( client_t *client, msg_t *msg ) {
 	} else if ( client->netchan.outgoingSequence - client->deltaMessage 
 		>= (PACKET_BACKUP - 3) ) {
 		// client hasn't gotten a good message through in a long time
-		Com_DPrintf ("%s: Delta request from out of date packet.\n", client->name);
+		Com_DPrintf ("%s: Delta request from out of date packet.\n", SV_ClientName( client ));
 		oldframe = NULL;
 		lastframe = 0;
 	} else {
@@ -146,7 +182,7 @@ static void SV_WriteSnapshotToClient( client_t *client, msg_t *msg ) {
 
 		// the snapshot's entities may still have rolled off the buffer, though
 		if ( oldframe->first_entity <= svs.nextSnapshotEntities - svs.numSnapshotEntities ) {
-			Com_DPrintf ("%s: Delta request from out of date entities.\n", client->name);
+			Com_DPrintf ("%s: Delta request from out of date entities.\n", SV_ClientName( client ));
 			oldframe = NULL;
 			lastframe = 0;
 		}
@@ -185,15 +221,35 @@ static void SV_WriteSnapshotToClient( client_t *client, msg_t *msg ) {
 
 	MSG_WriteByte (msg, snapFlags);
 
-	// send over the areabits
-	MSG_WriteByte (msg, frame->areabytes);
-	MSG_WriteData (msg, frame->areabits, frame->areabytes);
+	// send playerstates
+	if (frame->numPSs > MAX_SPLITVIEW) {
+		Com_DPrintf(S_COLOR_YELLOW "Warning: Almost sent numPSs as %d (max=%d)\n", frame->numPSs, MAX_SPLITVIEW);
+		frame->numPSs = MAX_SPLITVIEW;
+	}
 
-	// delta encode the playerstate
-	if ( oldframe ) {
-		MSG_WriteDeltaPlayerstate( msg, &oldframe->ps, &frame->ps );
-	} else {
-		MSG_WriteDeltaPlayerstate( msg, NULL, &frame->ps );
+	// send number of playerstates and local player indexes
+	MSG_WriteByte (msg, frame->numPSs);
+	for (i = 0; i < MAX_SPLITVIEW; i++) {
+		MSG_WriteByte (msg, frame->localPlayerIndex[i]);
+		MSG_WriteByte (msg, frame->playerNums[i]);
+
+		// send over the areabits
+		MSG_WriteByte (msg, frame->areabytes[i]);
+		MSG_WriteData (msg, frame->areabits[i], frame->areabytes[i]);
+	}
+
+	for (i = 0; i < MAX_SPLITVIEW; i++) {
+		if (frame->localPlayerIndex[i] == -1) {
+			continue;
+		}
+
+		// delta encode the playerstate
+		if ( oldframe && oldframe->localPlayerIndex[i] != -1) {
+			MSG_WriteDeltaPlayerstate( msg, SV_SnapshotPlayer(oldframe, oldframe->localPlayerIndex[i]),
+											SV_SnapshotPlayer(frame, frame->localPlayerIndex[i]) );
+		} else {
+			MSG_WriteDeltaPlayerstate( msg, NULL, SV_SnapshotPlayer(frame, frame->localPlayerIndex[i]) );
+		}
 	}
 
 	// delta encode the entities
@@ -228,6 +284,32 @@ void SV_UpdateServerCommandsToClient( client_t *client, msg_t *msg ) {
 }
 
 /*
+==================
+SV_WriteBaselineToClient
+==================
+*/
+void SV_WriteBaselineToClient( client_t *client, msg_t *msg ) {
+	sharedEntityState_t	*base;
+	int					start;
+
+	if ( !client->needBaseline ) {
+		return;
+	}
+
+	client->needBaseline = qfalse;
+
+	// write the baselines
+	for ( start = 0 ; start < MAX_GENTITIES; start++ ) {
+		base = (sharedEntityState_t *)DA_ElementPointer( sv.svEntitiesBaseline, start );
+		if ( !base->number ) {
+			continue;
+		}
+		MSG_WriteByte( msg, svc_baseline );
+		MSG_WriteDeltaEntity( msg, NULL, base, qtrue );
+	}
+}
+
+/*
 =============================================================================
 
 Build a client snapshot structure
@@ -237,7 +319,8 @@ Build a client snapshot structure
 
 typedef struct {
 	int		numSnapshotEntities;
-	int		snapshotEntities[MAX_SNAPSHOT_ENTITIES];	
+	int		maxSnapshotEntities;
+	int		snapshotEntities[MAX_SNAPSHOT_ENTITIES * MAX_SPLITVIEW];	
 } snapshotEntityNumbers_t;
 
 /*
@@ -268,7 +351,9 @@ static int QDECL SV_QsortEntityNumbers( const void *a, const void *b ) {
 SV_AddEntToSnapshot
 ===============
 */
-static void SV_AddEntToSnapshot( svEntity_t *svEnt, sharedEntity_t *gEnt, snapshotEntityNumbers_t *eNums ) {
+static void SV_AddEntToSnapshot( clientSnapshot_t *frame, svEntity_t *svEnt, sharedEntity_t *gEnt, snapshotEntityNumbers_t *eNums ) {
+	int i;
+
 	// if we have already added this entity to this snapshot, don't add again
 	if ( svEnt->snapshotCounter == sv.snapshotCounter ) {
 		return;
@@ -276,7 +361,18 @@ static void SV_AddEntToSnapshot( svEntity_t *svEnt, sharedEntity_t *gEnt, snapsh
 	svEnt->snapshotCounter = sv.snapshotCounter;
 
 	// if we are full, silently discard entities
-	if ( eNums->numSnapshotEntities == MAX_SNAPSHOT_ENTITIES ) {
+	if ( eNums->numSnapshotEntities == eNums->maxSnapshotEntities ) {
+		return;
+	}
+
+	// check if game wants to send entity to one of these clients
+	for (i = 0; i < frame->numPSs; i++) {
+		if ( (qboolean)VM_Call( gvm, GAME_SNAPSHOT_CALLBACK, gEnt->s.number, SV_SnapshotPlayer( frame, i )->playerNum ) ) {
+			break;
+		}
+	}
+
+	if (i == frame->numPSs) {
 		return;
 	}
 
@@ -289,7 +385,7 @@ static void SV_AddEntToSnapshot( svEntity_t *svEnt, sharedEntity_t *gEnt, snapsh
 SV_AddEntitiesVisibleFromPoint
 ===============
 */
-static void SV_AddEntitiesVisibleFromPoint( vec3_t origin, clientSnapshot_t *frame, 
+static void SV_AddEntitiesVisibleFromPoint( int psIndex, int playerNum, vec3_t origin, clientSnapshot_t *frame, 
 									snapshotEntityNumbers_t *eNums, qboolean portal ) {
 	int		e, i;
 	sharedEntity_t *ent;
@@ -312,7 +408,7 @@ static void SV_AddEntitiesVisibleFromPoint( vec3_t origin, clientSnapshot_t *fra
 	clientcluster = CM_LeafCluster (leafnum);
 
 	// calculate the visible areas
-	frame->areabytes = CM_WriteAreaBits( frame->areabits, clientarea );
+	frame->areabytes[psIndex] = CM_WriteAreaBits( frame->areabits[psIndex], clientarea );
 
 	clientpvs = CM_ClusterPVS (clientcluster);
 
@@ -334,23 +430,9 @@ static void SV_AddEntitiesVisibleFromPoint( vec3_t origin, clientSnapshot_t *fra
 			continue;
 		}
 
-		// entities can be flagged to be sent to only one client
-		if ( ent->r.svFlags & SVF_SINGLECLIENT ) {
-			if ( ent->r.singleClient != frame->ps.clientNum ) {
-				continue;
-			}
-		}
-		// entities can be flagged to be sent to everyone but one client
-		if ( ent->r.svFlags & SVF_NOTSINGLECLIENT ) {
-			if ( ent->r.singleClient == frame->ps.clientNum ) {
-				continue;
-			}
-		}
 		// entities can be flagged to be sent to a given mask of clients
-		if ( ent->r.svFlags & SVF_CLIENTMASK ) {
-			if (frame->ps.clientNum >= 32)
-				Com_Error( ERR_DROP, "SVF_CLIENTMASK: clientNum >= 32" );
-			if (~ent->r.singleClient & (1 << frame->ps.clientNum))
+		if ( ent->r.svFlags & SVF_PLAYERMASK ) {
+			if ( !Com_ClientListContains( &ent->r.sendPlayers, playerNum ) )
 				continue;
 		}
 
@@ -361,9 +443,18 @@ static void SV_AddEntitiesVisibleFromPoint( vec3_t origin, clientSnapshot_t *fra
 			continue;
 		}
 
+		// limit based on distance
+		if ( ent->r.cullDistance ) {
+			vec3_t dir;
+			VectorSubtract(ent->s.origin, origin, dir);
+			if ( VectorLengthSquared(dir) > (float) ent->r.cullDistance * ent->r.cullDistance ) {
+				continue;
+			}
+		}
+
 		// broadcast entities are always sent
 		if ( ent->r.svFlags & SVF_BROADCAST ) {
-			SV_AddEntToSnapshot( svEnt, ent, eNums );
+			SV_AddEntToSnapshot( frame, svEnt, ent, eNums );
 			continue;
 		}
 
@@ -408,19 +499,83 @@ static void SV_AddEntitiesVisibleFromPoint( vec3_t origin, clientSnapshot_t *fra
 			}
 		}
 
+		// visibility dummies
+		if ( ent->r.svFlags & SVF_VISDUMMY ) {
+			sharedEntity_t *ment = NULL;
+
+			// find master
+			ment = SV_GentityNum( ent->r.visDummyNum );
+
+			if ( ment ) {
+				svEntity_t *master = NULL;
+				master = SV_SvEntityForGentity( ment );
+
+				if ( master->snapshotCounter == sv.snapshotCounter || !ment->r.linked ) {
+					continue;
+				}
+
+				SV_AddEntToSnapshot( frame, master, ment, eNums );
+			}
+
+			// master needs to be added, but not this dummy ent
+			continue;
+		} else if ( ent->r.svFlags & SVF_VISDUMMY_MULTIPLE ) {
+			int h;
+			sharedEntity_t *ment = NULL;
+			svEntity_t *master = NULL;
+
+			for ( h = 0; h < sv.num_entities; h++ ) {
+				ment = SV_GentityNum( h );
+
+				if ( ment == ent ) {
+					continue;
+				}
+
+				if ( ment ) {
+					master = SV_SvEntityForGentity( ment );
+				} else {
+					continue;
+				}
+
+				if ( !ment->r.linked ) {
+					continue;
+				}
+
+				if ( ment->s.number != h ) {
+					Com_DPrintf( "FIXING vis dummy multiple ment->S.NUMBER!!!\n" );
+					ment->s.number = h;
+				}
+
+				if ( ment->r.svFlags & SVF_NOCLIENT ) {
+					continue;
+				}
+
+				if ( master->snapshotCounter == sv.snapshotCounter ) {
+					continue;
+				}
+
+				if ( ment->r.visDummyNum == ent->s.number ) {
+					SV_AddEntToSnapshot( frame, master, ment, eNums );
+				}
+			}
+
+			// masters need to be added, but not this dummy ent
+			continue;
+		}
+
 		// add it
-		SV_AddEntToSnapshot( svEnt, ent, eNums );
+		SV_AddEntToSnapshot( frame, svEnt, ent, eNums );
 
 		// if it's a portal entity, add everything visible from its camera position
 		if ( ent->r.svFlags & SVF_PORTAL ) {
-			if ( ent->s.generic1 ) {
+			if ( ent->r.portalCullDistance ) {
 				vec3_t dir;
 				VectorSubtract(ent->s.origin, origin, dir);
-				if ( VectorLengthSquared(dir) > (float) ent->s.generic1 * ent->s.generic1 ) {
+				if ( VectorLengthSquared(dir) > (float) ent->r.portalCullDistance * ent->r.portalCullDistance ) {
 					continue;
 				}
 			}
-			SV_AddEntitiesVisibleFromPoint( ent->s.origin2, frame, eNums, qtrue );
+			SV_AddEntitiesVisibleFromPoint( psIndex, playerNum, ent->s.origin2, frame, eNums, qtrue );
 		}
 
 	}
@@ -435,8 +590,6 @@ copies off the playerstate and areabits.
 
 This properly handles multiple recursive portals, but the render
 currently doesn't.
-
-For viewing through other player's eyes, clent can be something other than client->gentity
 =============
 */
 static void SV_BuildClientSnapshot( client_t *client ) {
@@ -444,12 +597,11 @@ static void SV_BuildClientSnapshot( client_t *client ) {
 	clientSnapshot_t			*frame;
 	snapshotEntityNumbers_t		entityNumbers;
 	int							i;
-	sharedEntity_t				*ent;
-	entityState_t				*state;
+	int							psIndex;
+	sharedEntityState_t			*state;
 	svEntity_t					*svEnt;
-	sharedEntity_t				*clent;
-	int							clientNum;
-	playerState_t				*ps;
+	int							playerNum;
+	sharedPlayerState_t			*ps;
 
 	// bump the counter used to prevent double adding
 	sv.snapshotCounter++;
@@ -464,32 +616,60 @@ static void SV_BuildClientSnapshot( client_t *client ) {
   // https://zerowing.idsoftware.com/bugzilla/show_bug.cgi?id=62
 	frame->num_entities = 0;
 	
-	clent = client->gentity;
-	if ( !clent || client->state == CS_ZOMBIE ) {
+	if ( client->state == CS_ZOMBIE ) {
 		return;
 	}
 
-	// grab the current playerState_t
-	ps = SV_GameClientNum( client - svs.clients );
-	frame->ps = *ps;
-
-	// never send client's own entity, because it can
-	// be regenerated from the playerstate
-	clientNum = frame->ps.clientNum;
-	if ( clientNum < 0 || clientNum >= MAX_GENTITIES ) {
-		Com_Error( ERR_DROP, "SV_SvEntityForGentity: bad gEnt" );
+	// allocate player states for frame if needed
+	if ( !frame->playerStates.pointer ) {
+		DA_Init( &frame->playerStates, MAX_SPLITVIEW, sv.gamePlayerStateSize, qtrue );
+	} else {
+		DA_Clear( &frame->playerStates );
 	}
-	svEnt = &sv.svEntities[ clientNum ];
 
-	svEnt->snapshotCounter = sv.snapshotCounter;
+	// grab the current player states
+	for (i = 0, frame->numPSs = 0; i < MAX_SPLITVIEW; i++) {
+		if ( !client->localPlayers[i] || !client->localPlayers[i]->gentity ) {
+			frame->localPlayerIndex[i] = -1;
+			frame->playerNums[i] = -1;
+			continue;
+		}
+		frame->playerNums[i] = client->localPlayers[i] - svs.players;
+		ps = SV_GamePlayerNum( frame->playerNums[i] );
+		DA_SetElement( &frame->playerStates, frame->numPSs, ps );
+		frame->localPlayerIndex[i] = frame->numPSs;
+		frame->numPSs++;
+	}
 
-	// find the client's viewpoint
-	VectorCopy( ps->origin, org );
-	org[2] += ps->viewheight;
+	if ( !frame->numPSs ) {
+		return;
+	}
 
-	// add all the entities directly visible to the eye, which
-	// may include portal entities that merge other viewpoints
-	SV_AddEntitiesVisibleFromPoint( org, frame, &entityNumbers, qfalse );
+	// never send player's own entity, because it can
+	// be regenerated from the playerstate
+	for (i = 0; i < frame->numPSs; i++) {
+		playerNum = SV_SnapshotPlayer(frame, i)->playerNum;
+		if ( playerNum < 0 || playerNum >= MAX_GENTITIES ) {
+			Com_Error( ERR_DROP, "SV_SvEntityForGentity: bad gEnt" );
+		}
+		svEnt = &sv.svEntities[ playerNum ];
+
+		svEnt->snapshotCounter = sv.snapshotCounter;
+	}
+
+	// Now that local players have been marked as no send, add visible entities.
+	for (i = 0; i < frame->numPSs; i++) {
+		// find the player's viewpoint
+		VectorCopy( SV_SnapshotPlayer(frame, i)->origin, org );
+		org[2] += SV_SnapshotPlayer(frame, i)->viewheight;
+
+		// allow MAX_SNAPSHOT_ENTITIES to be added for this view point
+		entityNumbers.maxSnapshotEntities = entityNumbers.numSnapshotEntities + MAX_SNAPSHOT_ENTITIES;
+
+		// add all the entities directly visible to the eye, which
+		// may include portal entities that merge other viewpoints
+		SV_AddEntitiesVisibleFromPoint( i, SV_SnapshotPlayer(frame, i)->playerNum, org, frame, &entityNumbers, qfalse );
+	}
 
 	// if there were portals visible, there may be out of order entities
 	// in the list which will need to be resorted for the delta compression
@@ -500,17 +680,18 @@ static void SV_BuildClientSnapshot( client_t *client ) {
 
 	// now that all viewpoint's areabits have been OR'd together, invert
 	// all of them to make it a mask vector, which is what the renderer wants
-	for ( i = 0 ; i < MAX_MAP_AREA_BYTES/4 ; i++ ) {
-		((int *)frame->areabits)[i] = ((int *)frame->areabits)[i] ^ -1;
+	for ( psIndex = 0; psIndex < frame->numPSs; psIndex++ ) {
+		for ( i = 0 ; i < MAX_MAP_AREA_BYTES/4 ; i++ ) {
+			((int *)frame->areabits[psIndex])[i] = ((int *)frame->areabits[psIndex])[i] ^ -1;
+		}
 	}
 
 	// copy the entity states out
 	frame->num_entities = 0;
 	frame->first_entity = svs.nextSnapshotEntities;
 	for ( i = 0 ; i < entityNumbers.numSnapshotEntities ; i++ ) {
-		ent = SV_GentityNum(entityNumbers.snapshotEntities[i]);
-		state = &svs.snapshotEntities[svs.nextSnapshotEntities % svs.numSnapshotEntities];
-		*state = ent->s;
+		state = SV_GameEntityStateNum( entityNumbers.snapshotEntities[i] );
+		DA_SetElement( &svs.snapshotEntities, svs.nextSnapshotEntities % svs.numSnapshotEntities, state );
 		svs.nextSnapshotEntities++;
 		// this should never hit, map should always be restarted first in SV_Frame
 		if ( svs.nextSnapshotEntities >= 0x7FFFFFFE ) {
@@ -603,7 +784,7 @@ void SV_SendClientSnapshot( client_t *client ) {
 
 	// bots need to have their snapshots build, but
 	// the query them directly without needing to be sent
-	if ( client->gentity && client->gentity->r.svFlags & SVF_BOT ) {
+	if ( client->netchan.remoteAddress.type == NA_BOT ) {
 		return;
 	}
 
@@ -617,9 +798,19 @@ void SV_SendClientSnapshot( client_t *client ) {
 	// (re)send any reliable server commands
 	SV_UpdateServerCommandsToClient( client, &msg );
 
-	// send over all the relevant entityState_t
-	// and the playerState_t
-	SV_WriteSnapshotToClient( client, &msg );
+	// if client is awaiting gamestate (or downloading a pk3), hold off sending snapshot as it
+	// can't be loaded until after cgame is loaded.
+	// must send snapshot to kicked (zombie) clients for them to process disconnect.
+	if ( client->state != CS_ACTIVE && client->state != CS_ZOMBIE ) {
+		client->needBaseline = qtrue;
+	} else {
+		// entities delta baseline
+		SV_WriteBaselineToClient( client, &msg );
+
+		// send over all the relevant entityState_t
+		// and playerState_t
+		SV_WriteSnapshotToClient( client, &msg );
+	}
 
 #ifdef USE_VOIP
 	SV_WriteVoipToClient( client, &msg );
@@ -627,7 +818,7 @@ void SV_SendClientSnapshot( client_t *client ) {
 
 	// check for overflow
 	if ( msg.overflowed ) {
-		Com_Printf ("WARNING: msg overflowed for %s\n", client->name);
+		Com_Printf ("WARNING: msg overflowed for %s\n", SV_ClientName( client ));
 		MSG_Clear (&msg);
 	}
 

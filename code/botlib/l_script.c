@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 
@@ -31,7 +39,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 //#define SCREWUP
 //#define BOTLIB
-//#define MEQCC
 //#define BSPC
 
 #ifdef SCREWUP
@@ -50,6 +57,7 @@ typedef enum {qfalse, qtrue}	qboolean;
 #ifdef BOTLIB
 //include files for usage in the bot library
 #include "../qcommon/q_shared.h"
+#include "../qcommon/qcommon.h"
 #include "botlib.h"
 #include "be_interface.h"
 #include "l_script.h"
@@ -58,25 +66,11 @@ typedef enum {qfalse, qtrue}	qboolean;
 #include "l_libvar.h"
 #endif //BOTLIB
 
-#ifdef MEQCC
-//include files for usage in MrElusive's QuakeC Compiler
-#include "qcc.h"
-#include "l_script.h"
-#include "l_memory.h"
-#include "l_log.h"
-
-#define qtrue	true
-#define qfalse	false
-#endif //MEQCC
-
 #ifdef BSPC
 //include files for usage in the BSP Converter
 #include "../bspc/qbsp.h"
 #include "../bspc/l_log.h"
 #include "../bspc/l_mem.h"
-
-#define qtrue	true
-#define qfalse	false
 #endif //BSPC
 
 
@@ -157,7 +151,7 @@ punctuation_t default_punctuations[] =
 #ifdef DOLLAR
 	{"$",P_DOLLAR, NULL},
 #endif //DOLLAR
-	{NULL, 0}
+	{NULL, 0, NULL}
 };
 
 #ifdef BOTLIB
@@ -237,11 +231,8 @@ void QDECL ScriptError(script_t *script, char *str, ...)
 	Q_vsnprintf(text, sizeof(text), str, ap);
 	va_end(ap);
 #ifdef BOTLIB
-	botimport.Print(PRT_ERROR, "file %s, line %d: %s\n", script->filename, script->line, text);
+	Com_Printf(S_COLOR_RED "Error: file %s, line %d: %s\n", script->filename, script->line, text);
 #endif //BOTLIB
-#ifdef MEQCC
-	printf("error: file %s, line %d: %s\n", script->filename, script->line, text);
-#endif //MEQCC
 #ifdef BSPC
 	Log_Print("error: file %s, line %d: %s\n", script->filename, script->line, text);
 #endif //BSPC
@@ -263,11 +254,8 @@ void QDECL ScriptWarning(script_t *script, char *str, ...)
 	Q_vsnprintf(text, sizeof(text), str, ap);
 	va_end(ap);
 #ifdef BOTLIB
-	botimport.Print(PRT_WARNING, "file %s, line %d: %s\n", script->filename, script->line, text);
+	Com_Printf(S_COLOR_YELLOW "Warning: file %s, line %d: %s\n", script->filename, script->line, text);
 #endif //BOTLIB
-#ifdef MEQCC
-	printf("warning: file %s, line %d: %s\n", script->filename, script->line, text);
-#endif //MEQCC
 #ifdef BSPC
 	Log_Print("warning: file %s, line %d: %s\n", script->filename, script->line, text);
 #endif //BSPC
@@ -1338,7 +1326,7 @@ script_t *LoadScriptFile(const char *filename)
 		Com_sprintf(pathname, sizeof(pathname), "%s/%s", basefolder, filename);
 	else
 		Com_sprintf(pathname, sizeof(pathname), "%s", filename);
-	length = botimport.FS_FOpenFile( pathname, &fp, FS_READ );
+	length = FS_FOpenFileByMode( pathname, &fp, FS_READ );
 	if (!fp) return NULL;
 #else
 	fp = fopen(filename, "rb");
@@ -1369,8 +1357,8 @@ script_t *LoadScriptFile(const char *filename)
 	SetScriptPunctuations(script, NULL);
 	//
 #ifdef BOTLIB
-	botimport.FS_Read(script->buffer, length, fp);
-	botimport.FS_FCloseFile(fp);
+	FS_Read(script->buffer, length, fp);
+	FS_FCloseFile(fp);
 #else
 	if (fread(script->buffer, length, 1, fp) != 1)
 	{
@@ -1388,7 +1376,7 @@ script_t *LoadScriptFile(const char *filename)
 // Returns:				-
 // Changes Globals:		-
 //============================================================================
-script_t *LoadScriptMemory(char *ptr, int length, char *name)
+script_t *LoadScriptMemory(const char *ptr, int length, const char *name)
 {
 	void *buffer;
 	script_t *script;
@@ -1437,9 +1425,12 @@ void FreeScript(script_t *script)
 // Returns:					-
 // Changes Globals:		-
 //============================================================================
-void PS_SetBaseFolder(char *path)
+void PS_SetBaseFolder(const char *path)
 {
 #ifdef BOTLIB
-	Com_sprintf(basefolder, sizeof(basefolder), "%s", path);
+	if (path)
+		Com_sprintf(basefolder, sizeof(basefolder), "%s", path);
+	else
+		basefolder[0] = '\0';
 #endif
 } //end of the function PS_SetBaseFolder

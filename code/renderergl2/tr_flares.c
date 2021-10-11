@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 // tr_flares.c
@@ -69,6 +77,7 @@ typedef struct flare_s {
 
 	int			fadeTime;
 
+	qboolean	cgvisible;			// for coronas, the client determines current visibility, but it's still inserted so it will fade out properly
 	qboolean	visible;			// state of last test
 	float		drawIntensity;		// may be non 0 even if !visible due to fading
 
@@ -77,6 +86,11 @@ typedef struct flare_s {
 
 	vec3_t		origin;
 	vec3_t		color;
+	float scale;
+
+	int id;
+
+	shader_t	*shader;
 } flare_t;
 
 #define		MAX_FLARES		128
@@ -127,7 +141,7 @@ RB_AddFlare
 This is called at surface tesselation time
 ==================
 */
-void RB_AddFlare( void *surface, int fogNum, vec3_t point, vec3_t color, vec3_t normal ) {
+void RB_AddFlare( void *surface, int fogNum, vec3_t point, vec3_t color, float scale, vec3_t normal, int id, qboolean cgvisible, shader_t *shader ) {
 	int				i;
 	flare_t			*f;
 	vec3_t			local;
@@ -168,7 +182,7 @@ void RB_AddFlare( void *surface, int fogNum, vec3_t point, vec3_t color, vec3_t 
 
 	// see if a flare with a matching surface, scene, and view exists
 	for ( f = r_activeFlares ; f ; f = f->next ) {
-		if ( f->surface == surface && f->frameSceneNum == backEnd.viewParms.frameSceneNum
+		if ( ( ( id == -1 && f->surface == surface ) || (id != -1 && f->id == id ) ) && f->frameSceneNum == backEnd.viewParms.frameSceneNum
 			&& f->inPortal == backEnd.viewParms.isPortal ) {
 			break;
 		}
@@ -189,7 +203,10 @@ void RB_AddFlare( void *surface, int fogNum, vec3_t point, vec3_t color, vec3_t 
 		f->frameSceneNum = backEnd.viewParms.frameSceneNum;
 		f->inPortal = backEnd.viewParms.isPortal;
 		f->addedFrame = -1;
+		f->id = id;
 	}
+
+	f->cgvisible = cgvisible;
 
 	if ( f->addedFrame != backEnd.viewParms.frameCount - 1 ) {
 		f->visible = qfalse;
@@ -198,9 +215,12 @@ void RB_AddFlare( void *surface, int fogNum, vec3_t point, vec3_t color, vec3_t 
 
 	f->addedFrame = backEnd.viewParms.frameCount;
 	f->fogNum = fogNum;
+	f->shader = shader;
 
 	VectorCopy(point, f->origin);
 	VectorCopy( color, f->color );
+
+	f->scale = scale;
 
 	// fade the intensity of the flare down as the
 	// light surface turns away from the viewer
@@ -220,42 +240,36 @@ RB_AddDlightFlares
 */
 void RB_AddDlightFlares( void ) {
 	dlight_t		*l;
-	int				i, j, k;
-	fog_t			*fog = NULL;
+	int				i;
+	int				id = 0;
 
-	if ( !r_flares->integer ) {
+	if ( r_flares->integer < 2 ) {
 		return;
 	}
 
 	l = backEnd.refdef.dlights;
 
-	if(tr.world)
-		fog = tr.world->fogs;
-
 	for (i=0 ; i<backEnd.refdef.num_dlights ; i++, l++) {
+		RB_AddFlare( (void *)l, R_PointFogNum( &backEnd.refdef, l->origin, 0 ), l->origin, l->color, 1.0f, NULL, id++, qtrue, tr.flareShader );
+	}
+}
 
-		if(fog)
-		{
-			// find which fog volume the light is in 
-			for ( j = 1 ; j < tr.world->numfogs ; j++ ) {
-				fog = &tr.world->fogs[j];
-				for ( k = 0 ; k < 3 ; k++ ) {
-					if ( l->origin[k] < fog->bounds[0][k] || l->origin[k] > fog->bounds[1][k] ) {
-						break;
-					}
-				}
-				if ( k == 3 ) {
-					break;
-				}
-			}
-			if ( j == tr.world->numfogs ) {
-				j = 0;
-			}
-		}
-		else
-			j = 0;
+/*
+==============
+RB_AddCoronaFlares
+==============
+*/
+void RB_AddCoronaFlares( void ) {
+	corona_t	*cor;
+	int			i;
+ 
+	if ( r_flares->integer != 1 && r_flares->integer != 3 ) {
+		return;
+	}
 
-		RB_AddFlare( (void *)l, j, l->origin, l->color, NULL );
+	cor = backEnd.refdef.coronas;
+	for ( i = 0 ; i < backEnd.refdef.num_coronas ; i++, cor++ ) {
+		RB_AddFlare( (void *)cor, R_PointFogNum( &backEnd.refdef, cor->origin, 0 ), cor->origin, cor->color, cor->scale, NULL, cor->id, cor->visible, cor->shader );
 	}
 }
 
@@ -281,30 +295,36 @@ void RB_TestFlare( flare_t *f ) {
 
 	backEnd.pc.c_flareTests++;
 
-	// doing a readpixels is as good as doing a glFinish(), so
-	// don't bother with another sync
-	glState.finishCalled = qfalse;
+	// ZTM: let cgame tell us visable to make sure coronas aren't seen though walls,
+	//      but use depth buffer to make sure not seen though masked textures
+	if ( f->id != -1 && !f->cgvisible ) {
+		visible = qfalse;
+	} else {
+		// doing a readpixels is as good as doing a glFinish(), so
+		// don't bother with another sync
+		glState.finishCalled = qfalse;
 
-	// if we're doing multisample rendering, read from the correct FBO
-	oldFbo = glState.currentFBO;
-	if (tr.msaaResolveFbo)
-	{
-		FBO_Bind(tr.msaaResolveFbo);
+		// if we're doing multisample rendering, read from the correct FBO
+		oldFbo = glState.currentFBO;
+		if (tr.msaaResolveFbo)
+		{
+			FBO_Bind(tr.msaaResolveFbo);
+		}
+
+		// read back the z buffer contents
+		qglReadPixels( f->windowX, f->windowY, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &depth );
+
+		// if we're doing multisample rendering, switch to the old FBO
+		if (tr.msaaResolveFbo)
+		{
+			FBO_Bind(oldFbo);
+		}
+
+		screenZ = backEnd.viewParms.projectionMatrix[14] / 
+			( ( 2*depth - 1 ) * backEnd.viewParms.projectionMatrix[11] - backEnd.viewParms.projectionMatrix[10] );
+
+		visible = ( -f->eyeZ - -screenZ ) < 24;
 	}
-
-	// read back the z buffer contents
-	qglReadPixels( f->windowX, f->windowY, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &depth );
-
-	// if we're doing multisample rendering, switch to the old FBO
-	if (tr.msaaResolveFbo)
-	{
-		FBO_Bind(oldFbo);
-	}
-
-	screenZ = backEnd.viewParms.projectionMatrix[14] / 
-		( ( 2*depth - 1 ) * backEnd.viewParms.projectionMatrix[11] - backEnd.viewParms.projectionMatrix[10] );
-
-	visible = ( -f->eyeZ - -screenZ ) < 24;
 
 	if ( visible ) {
 		if ( !f->visible ) {
@@ -340,6 +360,7 @@ void RB_RenderFlare( flare_t *f ) {
 	float			size;
 	vec3_t			color;
 	int				iColor[3];
+	int				iAlpha, srcBlend;
 	float distance, intensity, factor;
 	byte fogFactors[3] = {255, 255, 255};
 
@@ -352,13 +373,13 @@ void RB_RenderFlare( flare_t *f ) {
 		distance = -f->eyeZ;
 
 	// calculate the flare size..
-	size = backEnd.viewParms.viewportWidth * ( r_flareSize->value/640.0f + 8 / distance );
+	size = backEnd.viewParms.viewportWidth * ( ( r_flareSize->value * f->scale )/640.0f + 8 / distance );
 
 /*
  * This is an alternative to intensity scaling. It changes the size of the flare on screen instead
  * with growing distance. See in the description at the top why this is not the way to go.
 	// size will change ~ 1/r.
-	size = backEnd.viewParms.viewportWidth * (r_flareSize->value / (distance * -2.0f));
+	size = backEnd.viewParms.viewportWidth * ( ( r_flareSize->value * f->scale ) / (distance * -2.0f));
 */
 
 /*
@@ -379,17 +400,28 @@ void RB_RenderFlare( flare_t *f ) {
 	
 	intensity = flareCoeff * size * size / (factor * factor);
 
-	VectorScale(f->color, f->drawIntensity * intensity, color);
+	// Calculations for RGBA
+	srcBlend = f->shader->stages[0] ? ( f->shader->stages[0]->stateBits & GLS_SRCBLEND_BITS ) : 0;
+	if ( srcBlend == GLS_SRCBLEND_ONE ) {
+		// Q3 flare, fade color. blendfunc GL_ONE GL_ONE
+		VectorScale(f->color, f->drawIntensity * intensity, color);
+		iAlpha = 65535;
+	} else {
+		// RTCW/ET flare, fade alpha. blendfunc GL_SRC_ALPHA GL_ONE
+		// Note: RTCW source says it uses alpha blend/fade because overwise it doesn't blend in global fog and to switch back when it's fixed.
+		VectorScale(f->color, intensity, color);
+		iAlpha = f->drawIntensity * 255 * 257;
+	}
 
 	// Calculations for fogging
-	if(tr.world && f->fogNum > 0 && f->fogNum < tr.world->numfogs)
+	if(tr.world && f->fogNum > 0 && f->fogNum < tr.world->numfogs && !f->shader->noFog)
 	{
 		tess.numVertexes = 1;
 		VectorCopy(f->origin, tess.xyz[0]);
 		tess.fogNum = f->fogNum;
 	
 		RB_CalcModulateColorsByFog(fogFactors);
-		
+
 		// We don't need to render the flare if colors are 0 anyways.
 		if(!(fogFactors[0] || fogFactors[1] || fogFactors[2]))
 			return;
@@ -399,7 +431,8 @@ void RB_RenderFlare( flare_t *f ) {
 	iColor[1] = color[1] * fogFactors[1] * 257;
 	iColor[2] = color[2] * fogFactors[2] * 257;
 	
-	RB_BeginSurface( tr.flareShader, f->fogNum, 0 );
+	// fog calculation already done, use fogNum 0
+	RB_BeginSurface( f->shader, 0, 0 );
 
 	// FIXME: use quadstamp?
 	tess.xyz[tess.numVertexes][0] = f->windowX - size;
@@ -409,7 +442,7 @@ void RB_RenderFlare( flare_t *f ) {
 	tess.color[tess.numVertexes][0] = iColor[0];
 	tess.color[tess.numVertexes][1] = iColor[1];
 	tess.color[tess.numVertexes][2] = iColor[2];
-	tess.color[tess.numVertexes][3] = 65535;
+	tess.color[tess.numVertexes][3] = iAlpha;
 	tess.numVertexes++;
 
 	tess.xyz[tess.numVertexes][0] = f->windowX - size;
@@ -419,7 +452,7 @@ void RB_RenderFlare( flare_t *f ) {
 	tess.color[tess.numVertexes][0] = iColor[0];
 	tess.color[tess.numVertexes][1] = iColor[1];
 	tess.color[tess.numVertexes][2] = iColor[2];
-	tess.color[tess.numVertexes][3] = 65535;
+	tess.color[tess.numVertexes][3] = iAlpha;
 	tess.numVertexes++;
 
 	tess.xyz[tess.numVertexes][0] = f->windowX + size;
@@ -429,7 +462,7 @@ void RB_RenderFlare( flare_t *f ) {
 	tess.color[tess.numVertexes][0] = iColor[0];
 	tess.color[tess.numVertexes][1] = iColor[1];
 	tess.color[tess.numVertexes][2] = iColor[2];
-	tess.color[tess.numVertexes][3] = 65535;
+	tess.color[tess.numVertexes][3] = iAlpha;
 	tess.numVertexes++;
 
 	tess.xyz[tess.numVertexes][0] = f->windowX + size;
@@ -439,7 +472,7 @@ void RB_RenderFlare( flare_t *f ) {
 	tess.color[tess.numVertexes][0] = iColor[0];
 	tess.color[tess.numVertexes][1] = iColor[1];
 	tess.color[tess.numVertexes][2] = iColor[2];
-	tess.color[tess.numVertexes][3] = 65535;
+	tess.color[tess.numVertexes][3] = iAlpha;
 	tess.numVertexes++;
 
 	tess.indexes[tess.numIndexes++] = 0;
@@ -489,7 +522,10 @@ void RB_RenderFlares (void) {
 	backEnd.currentEntity = &tr.worldEntity;
 	backEnd.or = backEnd.viewParms.world;
 
-//	RB_AddDlightFlares();
+	// (SA) turned light flares back on.  must evaluate problem id had with this
+	RB_AddDlightFlares();
+
+	RB_AddCoronaFlares();
 
 	// perform z buffer readback on each flare in this view
 	draw = qfalse;

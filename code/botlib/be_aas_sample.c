@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 
@@ -31,9 +39,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "../qcommon/q_shared.h"
 #include "l_memory.h"
-#include "l_script.h"
-#include "l_precomp.h"
-#include "l_struct.h"
 #ifndef BSPC
 #include "l_libvar.h"
 #endif
@@ -403,7 +408,7 @@ vec_t AAS_BoxOriginDistanceFromPlane(vec3_t normal, vec3_t mins, vec3_t maxs, in
 // Changes Globals:		-
 //===========================================================================
 qboolean AAS_AreaEntityCollision(int areanum, vec3_t start, vec3_t end,
-										int presencetype, int passent, aas_trace_t *trace)
+										int presencetype, int passent, int contentmask, aas_trace_t *trace)
 {
 	int collision;
 	vec3_t boxmins, boxmaxs;
@@ -422,7 +427,7 @@ qboolean AAS_AreaEntityCollision(int areanum, vec3_t start, vec3_t end,
 		if (link->entnum == passent) continue;
 		//
 		if (AAS_EntityCollision(link->entnum, start, boxmins, boxmaxs, end,
-												CONTENTS_SOLID|CONTENTS_PLAYERCLIP, &bsptrace))
+												contentmask, &bsptrace))
 		{
 			collision = qtrue;
 		} //end if
@@ -430,10 +435,14 @@ qboolean AAS_AreaEntityCollision(int areanum, vec3_t start, vec3_t end,
 	if (collision)
 	{
 		trace->startsolid = bsptrace.startsolid;
-		trace->ent = bsptrace.ent;
+		trace->ent = bsptrace.entityNum;
 		VectorCopy(bsptrace.endpos, trace->endpos);
 		trace->area = 0;
 		trace->planenum = 0;
+		VectorCopy(bsptrace.plane.normal, trace->plane.normal);
+		trace->plane.dist = bsptrace.plane.dist;
+		// ZTM: FIXME: Are AAS plane type and BSP plane type the same values?
+		trace->plane.type = bsptrace.plane.type;
 		return qtrue;
 	} //end if
 	return qfalse;
@@ -445,8 +454,7 @@ qboolean AAS_AreaEntityCollision(int areanum, vec3_t start, vec3_t end,
 // Returns:					-
 // Changes Globals:		-
 //===========================================================================
-aas_trace_t AAS_TraceClientBBox(vec3_t start, vec3_t end, int presencetype,
-																				int passent)
+aas_trace_t AAS_TracePlayerBBox(vec3_t start, vec3_t end, int presencetype, int passent, int contentmask)
 {
 	int side, nodenum, tmpplanenum;
 	float front, back, frac;
@@ -489,6 +497,7 @@ aas_trace_t AAS_TraceClientBBox(vec3_t start, vec3_t end, int presencetype,
 			trace.ent = 0;
 			trace.area = 0;
 			trace.planenum = 0;
+			trace.plane = aasworld.planes[trace.planenum];
 			return trace;
 		} //end if
 		//number of the current node to test the line against
@@ -534,6 +543,7 @@ aas_trace_t AAS_TraceClientBBox(vec3_t start, vec3_t end, int presencetype,
 				//always take the plane with normal facing towards the trace start
 				plane = &aasworld.planes[trace.planenum];
 				if (DotProduct(v1, plane->normal) > 0) trace.planenum ^= 1;
+				trace.plane = aasworld.planes[trace.planenum];
 				return trace;
 			} //end if
 			else
@@ -542,7 +552,7 @@ aas_trace_t AAS_TraceClientBBox(vec3_t start, vec3_t end, int presencetype,
 				{
 					if (AAS_AreaEntityCollision(-nodenum, tstack_p->start,
 													tstack_p->end, presencetype, passent,
-													&trace))
+													contentmask, &trace))
 					{
 						if (!trace.startsolid)
 						{
@@ -587,6 +597,7 @@ aas_trace_t AAS_TraceClientBBox(vec3_t start, vec3_t end, int presencetype,
 			//always take the plane with normal facing towards the trace start
 			plane = &aasworld.planes[trace.planenum];
 			if (DotProduct(v1, plane->normal) > 0) trace.planenum ^= 1;
+			trace.plane = aasworld.planes[trace.planenum];
 			return trace;
 		} //end if
 #ifdef AAS_SAMPLE_DEBUG
@@ -713,8 +724,9 @@ aas_trace_t AAS_TraceClientBBox(vec3_t start, vec3_t end, int presencetype,
 			} //end if
 		} //end else
 	} //end while
-//	return trace;
-} //end of the function AAS_TraceClientBBox
+	//this point is unreachable
+	return trace;
+} //end of the function AAS_TracePlayerBBox
 //===========================================================================
 // recursive subdivision of the line by the BSP tree.
 //
@@ -899,7 +911,8 @@ int AAS_TraceAreas(vec3_t start, vec3_t end, int *areas, vec3_t *points, int max
 			} //end if
 		} //end else
 	} //end while
-//	return numareas;
+	//this point is unreachable
+	return numareas;
 } //end of the function AAS_TraceAreas
 //===========================================================================
 // a simple cross product

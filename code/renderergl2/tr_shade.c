@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 // tr_shade.c
@@ -85,10 +93,14 @@ static void R_BindAnimatedImageToTMU( textureBundle_t *bundle, int tmu ) {
 		index = 0;	// may happen with shader time offsets
 	}
 
-	// Windows x86 doesn't load renderer DLL with 64 bit modulus
-	//index %= bundle->numImageAnimations;
-	while ( index >= bundle->numImageAnimations ) {
-		index -= bundle->numImageAnimations;
+	if ( bundle->loopingImageAnim ) {
+		// Windows x86 doesn't load renderer DLL with 64 bit modulus
+		//index %= bundle->numImageAnimations;
+		while ( index >= bundle->numImageAnimations ) {
+			index -= bundle->numImageAnimations;
+		}
+	} else if ( index >= bundle->numImageAnimations ) {
+		index = bundle->numImageAnimations-1;
 	}
 
 	GL_BindToTMU( bundle->image[ index ], tmu );
@@ -325,6 +337,9 @@ static void ProjectDlightTexture( void ) {
 	float	radius;
 	int deformGen;
 	vec5_t deformParams;
+	float intensity;
+	qboolean vertexLight;
+	int shaderNum;
 
 	if ( !backEnd.refdef.num_dlights ) {
 		return;
@@ -345,8 +360,13 @@ static void ProjectDlightTexture( void ) {
 		VectorCopy( dl->transformed, origin );
 		radius = dl->radius;
 		scale = 1.0f / radius;
+		intensity = dl->intensity;
 
-		sp = &tr.dlightShader[deformGen == DGEN_NONE ? 0 : 1];
+		vertexLight = ( ( dl->flags & REF_DIRECTED_DLIGHT ) || ( dl->flags & REF_VERTEX_DLIGHT ) );
+
+		shaderNum = (deformGen == DGEN_NONE) ? 0 : 1;
+
+		sp = &tr.dlightShader[shaderNum];
 
 		backEnd.pc.c_dlightDraws++;
 
@@ -361,6 +381,38 @@ static void ProjectDlightTexture( void ) {
 		{
 			GLSL_SetUniformFloat5(sp, UNIFORM_DEFORMPARAMS, deformParams);
 			GLSL_SetUniformFloat(sp, UNIFORM_TIME, tess.shaderTime);
+
+			if (tess.shader->deforms[0].deformationWave.frequency < 0)
+			{
+				vec3_t worldUp;
+				vec3_t fireRiseDir = { 0, 0, 1 };
+
+				if ( !VectorCompare( backEnd.currentEntity->e.fireRiseDir, vec3_origin ) ) {
+					VectorCopy( backEnd.currentEntity->e.fireRiseDir, fireRiseDir );
+				}
+
+				if ( backEnd.currentEntity != &tr.worldEntity ) {    // world surfaces dont have an axis
+					VectorRotate( fireRiseDir, backEnd.currentEntity->e.axis, worldUp );
+				} else {
+					VectorCopy( fireRiseDir, worldUp );
+				}
+
+				GLSL_SetUniformVec3(sp, UNIFORM_FIRERISEDIR, worldUp);
+			}
+		}
+
+		if ( dl->flags & REF_DIRECTED_DLIGHT ) {
+			VectorCopy( dl->origin, origin );
+
+			scale = (tess.shader->cullType == CT_TWO_SIDED);
+
+			GLSL_SetUniformFloat(sp, UNIFORM_LIGHTRADIUS, -1);
+		} else if ( dl->flags & REF_VERTEX_DLIGHT ) {
+			scale = dl->radiusInverseCubed;
+
+			GLSL_SetUniformFloat(sp, UNIFORM_LIGHTRADIUS, radius);
+		} else {
+			GLSL_SetUniformFloat(sp, UNIFORM_LIGHTRADIUS, 0);
 		}
 
 		vector[0] = dl->color[0];
@@ -374,25 +426,103 @@ static void ProjectDlightTexture( void ) {
 		vector[2] = origin[2];
 		vector[3] = scale;
 		GLSL_SetUniformVec4(sp, UNIFORM_DLIGHTINFO, vector);
-	  
-		GL_BindToTMU( tr.dlightImage, TB_COLORMAP );
 
-		// include GLS_DEPTHFUNC_EQUAL so alpha tested surfaces don't add light
-		// where they aren't rendered
-		if ( dl->additive ) {
-			GL_State( GLS_ATEST_GT_0 | GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE | GLS_DEPTHFUNC_EQUAL );
+		GLSL_SetUniformFloat(sp, UNIFORM_INTENSITY, intensity);
+
+		if ( dl->dlshader ) {
+			shader_t *dls = dl->dlshader;
+			int i;
+
+			for ( i = 0; i < dls->numUnfoggedPasses; i++ ) {
+				shaderStage_t *stage = dls->stages[i];
+				R_BindAnimatedImageToTMU( &dls->stages[i]->bundle[0], TB_COLORMAP );
+				GL_State( stage->stateBits | GLS_DEPTHFUNC_EQUAL );
+
+				// alpha test function
+				switch ( stage->stateBits & GLS_ATEST_FUNC_BITS )
+				{
+					case GLS_ATEST_GREATER:
+						GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, U_ATEST_GREATER);
+						break;
+					case GLS_ATEST_LESS:
+						GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, U_ATEST_LESS);
+						break;
+					case GLS_ATEST_GREATEREQUAL:
+						GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, U_ATEST_GREATEREQUAL);
+						break;
+					case GLS_ATEST_LESSEQUAL:
+						GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, U_ATEST_LESSEQUAL);
+						break;
+					case GLS_ATEST_EQUAL:
+						GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, U_ATEST_EQUAL);
+						break;
+					case GLS_ATEST_NOTEQUAL:
+						GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, U_ATEST_NOTEQUAL);
+						break;
+					default:
+						GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, U_ATEST_NONE);
+						break;
+				}
+
+				// alpha test reference value
+				GLSL_SetUniformFloat(sp, UNIFORM_ALPHATESTREF, ( ( stage->stateBits & GLS_ATEST_REF_BITS ) >> GLS_ATEST_REF_SHIFT ) / 100.0f);
+
+				R_DrawElements(tess.numIndexes, tess.firstIndex);
+
+				backEnd.pc.c_totalIndexes += tess.numIndexes;
+				backEnd.pc.c_dlightIndexes += tess.numIndexes;
+				backEnd.pc.c_dlightVertexes += tess.numVertexes;
+			}
+		} else {
+			if ( vertexLight )
+				GL_BindToTMU( tr.whiteImage, TB_COLORMAP );
+			else
+				GL_BindToTMU( tr.dlightImage, TB_COLORMAP );
+
+			// include GLS_DEPTHFUNC_EQUAL so alpha tested surfaces don't add light
+			// where they aren't rendered
+			if ( dl->flags & REF_ADDITIVE_DLIGHT ) {
+				GL_State( GLS_ATEST_GT_0 | GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE | GLS_DEPTHFUNC_EQUAL );
+			}
+			else {
+				GL_State( GLS_ATEST_GT_0 | GLS_SRCBLEND_DST_COLOR | GLS_DSTBLEND_ONE | GLS_DEPTHFUNC_EQUAL );
+			}
+
+			// alpha test function
+			switch ( glState.glStateBits & GLS_ATEST_FUNC_BITS )
+			{
+				case GLS_ATEST_GREATER:
+					GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, U_ATEST_GREATER);
+					break;
+				case GLS_ATEST_LESS:
+					GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, U_ATEST_LESS);
+					break;
+				case GLS_ATEST_GREATEREQUAL:
+					GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, U_ATEST_GREATEREQUAL);
+					break;
+				case GLS_ATEST_LESSEQUAL:
+					GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, U_ATEST_LESSEQUAL);
+					break;
+				case GLS_ATEST_EQUAL:
+					GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, U_ATEST_EQUAL);
+					break;
+				case GLS_ATEST_NOTEQUAL:
+					GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, U_ATEST_NOTEQUAL);
+					break;
+				default:
+					GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, U_ATEST_NONE);
+					break;
+			}
+
+			// alpha test reference value
+			GLSL_SetUniformFloat(sp, UNIFORM_ALPHATESTREF, ( ( glState.glStateBits & GLS_ATEST_REF_BITS ) >> GLS_ATEST_REF_SHIFT ) / 100.0f);
+
+			R_DrawElements(tess.numIndexes, tess.firstIndex);
+
+			backEnd.pc.c_totalIndexes += tess.numIndexes;
+			backEnd.pc.c_dlightIndexes += tess.numIndexes;
+			backEnd.pc.c_dlightVertexes += tess.numVertexes;
 		}
-		else {
-			GL_State( GLS_ATEST_GT_0 | GLS_SRCBLEND_DST_COLOR | GLS_DSTBLEND_ONE | GLS_DEPTHFUNC_EQUAL );
-		}
-
-		GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, 1);
-
-		R_DrawElements(tess.numIndexes, tess.firstIndex);
-
-		backEnd.pc.c_totalIndexes += tess.numIndexes;
-		backEnd.pc.c_dlightIndexes += tess.numIndexes;
-		backEnd.pc.c_dlightVertexes += tess.numVertexes;
 	}
 }
 
@@ -407,8 +537,6 @@ static void ComputeShaderColors( shaderStage_t *pStage, vec4_t baseColor, vec4_t
 	qboolean is2DDraw = backEnd.currentEntity == &backEnd.entity2D;
 
 	float overbright = (isBlend || is2DDraw) ? 1.0f : (float)(1 << tr.overbrightBits);
-
-	fog_t *fog;
 
 	baseColor[0] = 
 	baseColor[1] =
@@ -465,17 +593,41 @@ static void ComputeShaderColors( shaderStage_t *pStage, vec4_t baseColor, vec4_t
 			vertColor[2] = -1.0f;
 			break;
 		case CGEN_FOG:
-			fog = tr.world->fogs + tess.fogNum;
+			{
+				fog_t		*fog;
+				unsigned	colorInt;
 
-			baseColor[0] = ((unsigned char *)(&fog->colorInt))[0] / 255.0f;
-			baseColor[1] = ((unsigned char *)(&fog->colorInt))[1] / 255.0f;
-			baseColor[2] = ((unsigned char *)(&fog->colorInt))[2] / 255.0f;
-			baseColor[3] = ((unsigned char *)(&fog->colorInt))[3] / 255.0f;
+				if ( tess.shader->isSky ) {
+					colorInt = tr.skyFogColorInt;
+				} else {
+					fog = tr.world->fogs + tess.fogNum;
+
+					if ( fog->originalBrushNumber < 0 ) {
+						colorInt = backEnd.refdef.fogColorInt;
+					} else {
+						colorInt = fog->colorInt;
+					}
+				}
+
+				baseColor[0] = ((unsigned char *)(&colorInt))[0] / 255.0f;
+				baseColor[1] = ((unsigned char *)(&colorInt))[1] / 255.0f;
+				baseColor[2] = ((unsigned char *)(&colorInt))[2] / 255.0f;
+				baseColor[3] = ((unsigned char *)(&colorInt))[3] / 255.0f;
+			}
 			break;
 		case CGEN_WAVEFORM:
 			baseColor[0] = 
 			baseColor[1] = 
 			baseColor[2] = RB_CalcWaveColorSingle( &pStage->rgbWave );
+			break;
+		case CGEN_COLOR_WAVEFORM:
+			{
+				float glow = RB_CalcWaveColorSingle( &pStage->rgbWave );
+
+				baseColor[0] = glow * pStage->constantColor[0] / 255.0f;
+				baseColor[1] = glow * pStage->constantColor[1] / 255.0f;
+				baseColor[2] = glow * pStage->constantColor[2] / 255.0f;
+			}
 			break;
 		case CGEN_ENTITY:
 			if (backEnd.currentEntity)
@@ -497,6 +649,7 @@ static void ComputeShaderColors( shaderStage_t *pStage, vec4_t baseColor, vec4_t
 			break;
 		case CGEN_IDENTITY:
 		case CGEN_LIGHTING_DIFFUSE:
+		case CGEN_LIGHTING_DIFFUSE_ENTITY:
 			baseColor[0] =
 			baseColor[1] =
 			baseColor[2] = overbright;
@@ -550,6 +703,22 @@ static void ComputeShaderColors( shaderStage_t *pStage, vec4_t baseColor, vec4_t
 			baseColor[3] = 1.0f;
 			vertColor[3] = 0.0f;
 			break;
+		case AGEN_SKY_ALPHA:
+			baseColor[3] = backEnd.refdef.skyAlpha;
+			vertColor[3] = 0.0f;
+			break;
+		case AGEN_ONE_MINUS_SKY_ALPHA:
+			baseColor[3] = 1.0f - backEnd.refdef.skyAlpha;
+			vertColor[3] = 0.0f;
+			break;
+		case AGEN_NORMALZFADE:
+			baseColor[3] = pStage->constantColor[3] / 255.0f;
+			if (backEnd.currentEntity && backEnd.currentEntity->e.hModel)
+			{
+				baseColor[3] *= ((unsigned char *)backEnd.currentEntity->e.shaderRGBA)[3] / 255.0f;
+			}
+			vertColor[3] = 0.0f;
+			break;
 	}
 
 	// FIXME: find some way to implement this.
@@ -569,16 +738,52 @@ static void ComputeShaderColors( shaderStage_t *pStage, vec4_t baseColor, vec4_t
 }
 
 
-static void ComputeFogValues(vec4_t fogDistanceVector, vec4_t fogDepthVector, float *eyeT)
+static void ComputeFogValues(vec4_t fogDistanceVector, vec4_t fogDepthVector, float *eyeT, fogType_t *outFogType)
 {
 	// from RB_CalcFogTexCoords()
 	fog_t  *fog;
+	bmodel_t *bmodel;
 	vec3_t  local;
+	float tcScale;
+	fogType_t fogType;
 
-	if (!tess.fogNum)
+	if (!tess.fogNum) {
+		if ( outFogType ) {
+			*outFogType = FT_NONE;
+		}
 		return;
+	}
 
-	fog = tr.world->fogs + tess.fogNum;
+	if ( tess.shader->isSky ) {
+		fog = NULL;
+		bmodel = NULL;
+		tcScale = tr.skyFogTcScale;
+		fogType = tr.skyFogType;
+	} else {
+		fog = tr.world->fogs + tess.fogNum;
+		bmodel = tr.world->bmodels + fog->modelNum;
+
+		// Global fog
+		if ( fog->originalBrushNumber < 0 ) {
+			if ( backEnd.refdef.fogType == FT_NONE ) {
+				return;
+			}
+
+			tcScale = backEnd.refdef.fogTcScale;
+			fogType = backEnd.refdef.fogType;
+		} else {
+			tcScale = fog->tcScale;
+			fogType = fog->shader->fogParms.fogType;
+		}
+	}
+
+	if ( outFogType ) {
+		*outFogType = fogType;
+	}
+
+	if ( fogType == FT_NONE ) {
+		return;
+	}
 
 	VectorSubtract( backEnd.or.origin, backEnd.viewParms.or.origin, local );
 	fogDistanceVector[0] = -backEnd.or.modelMatrix[2];
@@ -587,17 +792,27 @@ static void ComputeFogValues(vec4_t fogDistanceVector, vec4_t fogDepthVector, fl
 	fogDistanceVector[3] = DotProduct( local, backEnd.viewParms.or.axis[0] );
 
 	// scale the fog vectors based on the fog's thickness
-	VectorScale4(fogDistanceVector, fog->tcScale, fogDistanceVector);
+	VectorScale4(fogDistanceVector, tcScale, fogDistanceVector);
 
 	// rotate the gradient vector for this orientation
-	if ( fog->hasSurface ) {
-		fogDepthVector[0] = fog->surface[0] * backEnd.or.axis[0][0] + 
+	if ( fog && fog->hasSurface ) {
+		vec4_t fogSurface;
+
+		// offset fog surface
+		VectorCopy( fog->surface, fogSurface );
+#if 1 // WolfET
+		fogSurface[ 3 ] = fog->surface[ 3 ] + DotProduct( fogSurface, bmodel->orientation.origin );
+#else
+		fogSurface[ 3 ] = fog->surface[ 3 ];
+#endif
+
+		fogDepthVector[0] = fogSurface[0] * backEnd.or.axis[0][0] + 
 			fog->surface[1] * backEnd.or.axis[0][1] + fog->surface[2] * backEnd.or.axis[0][2];
-		fogDepthVector[1] = fog->surface[0] * backEnd.or.axis[1][0] + 
+		fogDepthVector[1] = fogSurface[0] * backEnd.or.axis[1][0] + 
 			fog->surface[1] * backEnd.or.axis[1][1] + fog->surface[2] * backEnd.or.axis[1][2];
-		fogDepthVector[2] = fog->surface[0] * backEnd.or.axis[2][0] + 
+		fogDepthVector[2] = fogSurface[0] * backEnd.or.axis[2][0] + 
 			fog->surface[1] * backEnd.or.axis[2][1] + fog->surface[2] * backEnd.or.axis[2][2];
-		fogDepthVector[3] = -fog->surface[3] + DotProduct( backEnd.or.origin, fog->surface );
+		fogDepthVector[3] = -fogSurface[3] + DotProduct( backEnd.or.origin, fog->surface );
 
 		*eyeT = DotProduct( backEnd.or.viewOrigin, fogDepthVector ) + fogDepthVector[3];
 	} else {
@@ -643,6 +858,7 @@ static void ForwardDlight( void ) {
 	//vec3_t	origin;
 	//float	scale;
 	float	radius;
+	float	intensity;
 
 	int deformGen;
 	vec5_t deformParams;
@@ -659,7 +875,7 @@ static void ForwardDlight( void ) {
 	
 	ComputeDeformValues(&deformGen, deformParams);
 
-	ComputeFogValues(fogDistanceVector, fogDepthVector, &eyeT);
+	ComputeFogValues(fogDistanceVector, fogDepthVector, &eyeT, NULL);
 
 	for ( l = 0 ; l < backEnd.refdef.num_dlights ; l++ ) {
 		dlight_t	*dl;
@@ -676,6 +892,7 @@ static void ForwardDlight( void ) {
 		//VectorCopy( dl->transformed, origin );
 		radius = dl->radius;
 		//scale = 1.0f / radius;
+		intensity = dl->intensity;
 
 		//if (pStage->glslShaderGroup == tr.lightallShader)
 		{
@@ -697,6 +914,25 @@ static void ForwardDlight( void ) {
 
 		GLSL_SetUniformFloat(sp, UNIFORM_VERTEXLERP, glState.vertexAttribsInterpolation);
 
+		if ((deformGen != DGEN_NONE && tess.shader->deforms[0].deformationWave.frequency < 0 )
+			|| pStage->alphaGen == AGEN_NORMALZFADE)
+		{
+			vec3_t worldUp;
+			vec3_t fireRiseDir = { 0, 0, 1 };
+
+			if ( !VectorCompare( backEnd.currentEntity->e.fireRiseDir, vec3_origin ) ) {
+				VectorCopy( backEnd.currentEntity->e.fireRiseDir, fireRiseDir );
+			}
+
+			if ( backEnd.currentEntity != &tr.worldEntity ) {    // world surfaces dont have an axis
+				VectorRotate( fireRiseDir, backEnd.currentEntity->e.axis, worldUp );
+			} else {
+				VectorCopy( fireRiseDir, worldUp );
+			}
+
+			GLSL_SetUniformVec3(sp, UNIFORM_FIRERISEDIR, worldUp);
+		}
+
 		GLSL_SetUniformInt(sp, UNIFORM_DEFORMGEN, deformGen);
 		if (deformGen != DGEN_NONE)
 		{
@@ -704,7 +940,7 @@ static void ForwardDlight( void ) {
 			GLSL_SetUniformFloat(sp, UNIFORM_TIME, tess.shaderTime);
 		}
 
-		if ( input->fogNum ) {
+		if ( input->fogNum && ( !input->shader->noFog || pStage->isFogged ) ) {
 			vec4_t fogColorMask;
 
 			GLSL_SetUniformVec4(sp, UNIFORM_FOGDISTANCE, fogDistanceVector);
@@ -730,11 +966,39 @@ static void ForwardDlight( void ) {
 		{
 			GLSL_SetUniformFloat(sp, UNIFORM_PORTALRANGE, tess.shader->portalRange);
 		}
+		else if (pStage->alphaGen == AGEN_NORMALZFADE)
+		{
+			float lowest, highest;
+			//qboolean zombieEffect = qfalse;
+
+			lowest = pStage->zFadeBounds[0];
+			if ( lowest == -1000 ) {    // use entity alpha
+				lowest = backEnd.currentEntity->e.shaderTime;
+				//zombieEffect = qtrue;
+			}
+			highest = pStage->zFadeBounds[1];
+			if ( highest == -1000 ) {   // use entity alpha
+				highest = backEnd.currentEntity->e.shaderTime;
+				//zombieEffect = qtrue;
+			}
+
+			// TODO: Handle normalzfade zombie effect
+
+			GLSL_SetUniformFloat(sp, UNIFORM_ZFADELOWEST, lowest);
+			GLSL_SetUniformFloat(sp, UNIFORM_ZFADEHIGHEST, highest);
+		}
 
 		GLSL_SetUniformInt(sp, UNIFORM_COLORGEN, pStage->rgbGen);
 		GLSL_SetUniformInt(sp, UNIFORM_ALPHAGEN, pStage->alphaGen);
 
-		GLSL_SetUniformVec3(sp, UNIFORM_DIRECTEDLIGHT, dl->color);
+		if (pStage->bundle[0].tcGen == TCGEN_ENVIRONMENT_CELSHADE_MAPPED)
+		{
+			GLSL_SetUniformVec3(sp, UNIFORM_MODELLIGHTDIR, backEnd.currentEntity->modelLightDir);
+		}
+
+		intensity = Com_Clamp(0.0f, 1.0f, intensity);
+		VectorScale(dl->color, intensity, vector);
+		GLSL_SetUniformVec3(sp, UNIFORM_DIRECTEDLIGHT, vector);
 
 		VectorSet(vector, 0, 0, 0);
 		GLSL_SetUniformVec3(sp, UNIFORM_AMBIENTLIGHT, vector);
@@ -752,6 +1016,7 @@ static void ForwardDlight( void ) {
 		// where they aren't rendered
 		GL_State( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE | GLS_DEPTHFUNC_EQUAL );
 		GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, 0);
+		GLSL_SetUniformFloat(sp, UNIFORM_ALPHATESTREF, 0.0f);
 
 		GLSL_SetUniformMat4(sp, UNIFORM_MODELMATRIX, backEnd.or.transformMatrix);
 
@@ -865,6 +1130,7 @@ static void ProjectPshadowVBOGLSL( void ) {
 		// where they aren't rendered
 		GL_State( GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA | GLS_DEPTHFUNC_EQUAL );
 		GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, 0);
+		GLSL_SetUniformFloat(sp, UNIFORM_ALPHATESTREF, 0.0f);
 
 		GL_BindToTMU( tr.pshadowMaps[l], TB_DIFFUSEMAP );
 
@@ -894,9 +1160,48 @@ static void RB_FogPass( void ) {
 	vec4_t	fogDistanceVector, fogDepthVector = {0, 0, 0, 0};
 	float	eyeT = 0;
 	shaderProgram_t *sp;
+	fogType_t	fogType;
+	int		colorInt;
 
 	int deformGen;
 	vec5_t deformParams;
+
+	if ( tess.shader->isSky ) {
+		fogType = tr.skyFogType;
+		colorInt = tr.skyFogColorInt;
+	} else {
+		fog = tr.world->fogs + tess.fogNum;
+
+		// Global fog
+		if ( fog->originalBrushNumber < 0 ) {
+			fogType = backEnd.refdef.fogType;
+			colorInt = backEnd.refdef.fogColorInt;
+		} else {
+			fogType = fog->shader->fogParms.fogType;
+			colorInt = fog->colorInt;
+		}
+	}
+
+	if ( fogType == FT_NONE ) {
+		return;
+	}
+
+	// check if any stage is fogged
+	if ( tess.shader->noFog ) {
+		int i;
+
+		for ( i = 0 ; i < MAX_SHADER_STAGES; i++ ) {
+			shaderStage_t *pStage = tess.xstages[i];
+
+			if ( !pStage ) {
+				return;
+			}
+
+			if ( pStage->isFogged ) {
+				break;
+			}
+		}
+	}
 
 	ComputeDeformValues(&deformGen, deformParams);
 
@@ -918,8 +1223,6 @@ static void RB_FogPass( void ) {
 
 	GLSL_BindProgram(sp);
 
-	fog = tr.world->fogs + tess.fogNum;
-
 	GLSL_SetUniformMat4(sp, UNIFORM_MODELVIEWPROJECTIONMATRIX, glState.modelviewProjection);
 
 	GLSL_SetUniformFloat(sp, UNIFORM_VERTEXLERP, glState.vertexAttribsInterpolation);
@@ -934,16 +1237,35 @@ static void RB_FogPass( void ) {
 	{
 		GLSL_SetUniformFloat5(sp, UNIFORM_DEFORMPARAMS, deformParams);
 		GLSL_SetUniformFloat(sp, UNIFORM_TIME, tess.shaderTime);
+
+		if (tess.shader->deforms[0].deformationWave.frequency < 0)
+		{
+			vec3_t worldUp;
+			vec3_t fireRiseDir = { 0, 0, 1 };
+
+			if ( !VectorCompare( backEnd.currentEntity->e.fireRiseDir, vec3_origin ) ) {
+				VectorCopy( backEnd.currentEntity->e.fireRiseDir, fireRiseDir );
+			}
+
+			if ( backEnd.currentEntity != &tr.worldEntity ) {    // world surfaces dont have an axis
+				VectorRotate( fireRiseDir, backEnd.currentEntity->e.axis, worldUp );
+			} else {
+				VectorCopy( fireRiseDir, worldUp );
+			}
+
+			GLSL_SetUniformVec3(sp, UNIFORM_FIRERISEDIR, worldUp);
+		}
 	}
 
-	color[0] = ((unsigned char *)(&fog->colorInt))[0] / 255.0f;
-	color[1] = ((unsigned char *)(&fog->colorInt))[1] / 255.0f;
-	color[2] = ((unsigned char *)(&fog->colorInt))[2] / 255.0f;
-	color[3] = ((unsigned char *)(&fog->colorInt))[3] / 255.0f;
+	color[0] = ((unsigned char *)(&colorInt))[0] / 255.0f;
+	color[1] = ((unsigned char *)(&colorInt))[1] / 255.0f;
+	color[2] = ((unsigned char *)(&colorInt))[2] / 255.0f;
+	color[3] = ((unsigned char *)(&colorInt))[3] / 255.0f;
 	GLSL_SetUniformVec4(sp, UNIFORM_COLOR, color);
 
-	ComputeFogValues(fogDistanceVector, fogDepthVector, &eyeT);
+	ComputeFogValues(fogDistanceVector, fogDepthVector, &eyeT, NULL);
 
+	GLSL_SetUniformInt(sp, UNIFORM_FOGTYPE, fogType);
 	GLSL_SetUniformVec4(sp, UNIFORM_FOGDISTANCE, fogDistanceVector);
 	GLSL_SetUniformVec4(sp, UNIFORM_FOGDEPTH, fogDepthVector);
 	GLSL_SetUniformFloat(sp, UNIFORM_FOGEYET, eyeT);
@@ -954,6 +1276,7 @@ static void RB_FogPass( void ) {
 		GL_State( GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA );
 	}
 	GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, 0);
+	GLSL_SetUniformFloat(sp, UNIFORM_ALPHATESTREF, 0.0f);
 
 	R_DrawElements(tess.numIndexes, tess.firstIndex);
 }
@@ -979,9 +1302,15 @@ static unsigned int RB_CalcShaderVertexAttribs( shaderCommands_t *input )
 static void RB_IterateStagesGeneric( shaderCommands_t *input )
 {
 	int stage;
+	qboolean overridealpha = qfalse;
+	int oldAlphaGen = AGEN_IDENTITY;
+	int oldStateBits = 0;
+	qboolean overridecolor = qfalse;
+	int oldRgbGen = CGEN_IDENTITY;
 	
 	vec4_t fogDistanceVector, fogDepthVector = {0, 0, 0, 0};
 	float eyeT = 0;
+	fogType_t fogType = FT_NONE, stageFogType;
 
 	int deformGen;
 	vec5_t deformParams;
@@ -990,7 +1319,7 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 
 	ComputeDeformValues(&deformGen, deformParams);
 
-	ComputeFogValues(fogDistanceVector, fogDepthVector, &eyeT);
+	ComputeFogValues(fogDistanceVector, fogDepthVector, &eyeT, &fogType);
 
 	for ( stage = 0; stage < MAX_SHADER_STAGES; stage++ )
 	{
@@ -1003,6 +1332,39 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		{
 			break;
 		}
+
+		// override the shader alpha channel if requested
+		if ( backEnd.currentEntity && backEnd.currentEntity->e.renderfx & RF_FORCE_ENT_ALPHA )
+		{
+			overridealpha = qtrue;
+			oldAlphaGen = pStage->alphaGen;
+			oldStateBits = pStage->stateBits;
+			pStage->alphaGen = AGEN_ENTITY;
+
+			// set bits for blendfunc blend
+			pStage->stateBits = GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA;
+
+			// keep the original alphafunc, if any
+			pStage->stateBits |= ( oldStateBits & GLS_ATEST_BITS );
+		}
+		else
+		{
+			overridealpha = qfalse;
+		}
+
+		// override the shader color channels if requested
+		if ( backEnd.currentEntity && backEnd.currentEntity->e.renderfx & RF_RGB_TINT )
+		{
+			overridecolor = qtrue;
+			oldRgbGen = pStage->rgbGen;
+			pStage->rgbGen = CGEN_ENTITY;
+		}
+		else
+		{
+			overridecolor = qfalse;
+		}
+
+		stageFogType = FT_NONE;
 
 		if (backEnd.depthFill)
 		{
@@ -1087,7 +1449,9 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		}
 		else
 		{
-			sp = GLSL_GetGenericShaderProgram(stage);
+			stageFogType = ( !input->shader->noFog || pStage->isFogged ) ? fogType : FT_NONE;
+
+			sp = GLSL_GetGenericShaderProgram(stage, stageFogType);
 
 			backEnd.pc.c_genericDraws++;
 		}
@@ -1104,6 +1468,25 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		{
 			GLSL_SetUniformMat4BoneMatrix(sp, UNIFORM_BONEMATRIX, glState.boneMatrix, glState.boneAnimation);
 		}
+
+		if ((deformGen != DGEN_NONE && tess.shader->deforms[0].deformationWave.frequency < 0 )
+			|| pStage->alphaGen == AGEN_NORMALZFADE)
+		{
+			vec3_t worldUp;
+			vec3_t fireRiseDir = { 0, 0, 1 };
+
+			if ( !VectorCompare( backEnd.currentEntity->e.fireRiseDir, vec3_origin ) ) {
+				VectorCopy( backEnd.currentEntity->e.fireRiseDir, fireRiseDir );
+			}
+
+			if ( backEnd.currentEntity != &tr.worldEntity ) {    // world surfaces dont have an axis
+				VectorRotate( fireRiseDir, backEnd.currentEntity->e.axis, worldUp );
+			} else {
+				VectorCopy( fireRiseDir, worldUp );
+			}
+
+			GLSL_SetUniformVec3(sp, UNIFORM_FIRERISEDIR, worldUp);
+		}
 		
 		GLSL_SetUniformInt(sp, UNIFORM_DEFORMGEN, deformGen);
 		if (deformGen != DGEN_NONE)
@@ -1112,29 +1495,44 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			GLSL_SetUniformFloat(sp, UNIFORM_TIME, tess.shaderTime);
 		}
 
-		if ( input->fogNum ) {
+		GLSL_SetUniformInt(sp, UNIFORM_FOGTYPE, stageFogType);
+		if (stageFogType != FT_NONE)
+		{
 			GLSL_SetUniformVec4(sp, UNIFORM_FOGDISTANCE, fogDistanceVector);
 			GLSL_SetUniformVec4(sp, UNIFORM_FOGDEPTH, fogDepthVector);
 			GLSL_SetUniformFloat(sp, UNIFORM_FOGEYET, eyeT);
 		}
 
 		GL_State( pStage->stateBits );
-		if ((pStage->stateBits & GLS_ATEST_BITS) == GLS_ATEST_GT_0)
+
+		// alpha test function
+		switch ( pStage->stateBits & GLS_ATEST_FUNC_BITS )
 		{
-			GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, 1);
+			case GLS_ATEST_GREATER:
+				GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, U_ATEST_GREATER);
+				break;
+			case GLS_ATEST_LESS:
+				GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, U_ATEST_LESS);
+				break;
+			case GLS_ATEST_GREATEREQUAL:
+				GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, U_ATEST_GREATEREQUAL);
+				break;
+			case GLS_ATEST_LESSEQUAL:
+				GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, U_ATEST_LESSEQUAL);
+				break;
+			case GLS_ATEST_EQUAL:
+				GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, U_ATEST_EQUAL);
+				break;
+			case GLS_ATEST_NOTEQUAL:
+				GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, U_ATEST_NOTEQUAL);
+				break;
+			default:
+				GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, U_ATEST_NONE);
+				break;
 		}
-		else if ((pStage->stateBits & GLS_ATEST_BITS) == GLS_ATEST_LT_80)
-		{
-			GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, 2);
-		}
-		else if ((pStage->stateBits & GLS_ATEST_BITS) == GLS_ATEST_GE_80)
-		{
-			GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, 3);
-		}
-		else
-		{
-			GLSL_SetUniformInt(sp, UNIFORM_ALPHATEST, 0);
-		}
+
+		// alpha test reference value
+		GLSL_SetUniformFloat(sp, UNIFORM_ALPHATESTREF, ( ( pStage->stateBits & GLS_ATEST_REF_BITS ) >> GLS_ATEST_REF_SHIFT ) / 100.0f);
 
 
 		{
@@ -1147,7 +1545,7 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			GLSL_SetUniformVec4(sp, UNIFORM_VERTCOLOR, vertColor);
 		}
 
-		if (pStage->rgbGen == CGEN_LIGHTING_DIFFUSE)
+		if (pStage->rgbGen == CGEN_LIGHTING_DIFFUSE || pStage->rgbGen == CGEN_LIGHTING_DIFFUSE_ENTITY)
 		{
 			vec4_t vec;
 
@@ -1163,17 +1561,54 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			GLSL_SetUniformVec3(sp, UNIFORM_MODELLIGHTDIR, backEnd.currentEntity->modelLightDir);
 
 			GLSL_SetUniformFloat(sp, UNIFORM_LIGHTRADIUS, 0.0f);
+
+			if ( pStage->rgbGen == CGEN_LIGHTING_DIFFUSE_ENTITY )
+			{
+				int i;
+
+				for ( i = 0; i < 3; ++i )
+				{
+					vec[i] = backEnd.currentEntity->e.shaderRGBA[i] / 255.0f;
+				}
+
+				GLSL_SetUniformVec3(sp, UNIFORM_DIFFUSECOLOR, vec);
+			}
+		}
+		else if (pStage->bundle[0].tcGen == TCGEN_ENVIRONMENT_CELSHADE_MAPPED)
+		{
+			GLSL_SetUniformVec3(sp, UNIFORM_MODELLIGHTDIR, backEnd.currentEntity->modelLightDir);
 		}
 
 		if (pStage->alphaGen == AGEN_PORTAL)
 		{
 			GLSL_SetUniformFloat(sp, UNIFORM_PORTALRANGE, tess.shader->portalRange);
 		}
+		else if (pStage->alphaGen == AGEN_NORMALZFADE)
+		{
+			float lowest, highest;
+			//qboolean zombieEffect = qfalse;
+
+			lowest = pStage->zFadeBounds[0];
+			if ( lowest == -1000 ) {    // use entity alpha
+				lowest = backEnd.currentEntity->e.shaderTime;
+				//zombieEffect = qtrue;
+			}
+			highest = pStage->zFadeBounds[1];
+			if ( highest == -1000 ) {   // use entity alpha
+				highest = backEnd.currentEntity->e.shaderTime;
+				//zombieEffect = qtrue;
+			}
+
+			// TODO: Handle normalzfade zombie effect
+
+			GLSL_SetUniformFloat(sp, UNIFORM_ZFADELOWEST, lowest);
+			GLSL_SetUniformFloat(sp, UNIFORM_ZFADEHIGHEST, highest);
+		}
 
 		GLSL_SetUniformInt(sp, UNIFORM_COLORGEN, pStage->rgbGen);
 		GLSL_SetUniformInt(sp, UNIFORM_ALPHAGEN, pStage->alphaGen);
 
-		if ( input->fogNum )
+		if (stageFogType != FT_NONE)
 		{
 			vec4_t fogColorMask;
 
@@ -1343,6 +1778,16 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		else if ( pStage->bundle[1].image[0] != 0 )
 		{
 			R_BindAnimatedImageToTMU( &pStage->bundle[0], 0 );
+
+			//
+			// lightmap/secondary pass
+			//
+			if ( r_lightmap->integer && pStage->bundle[1].isLightmap ) {
+				GLSL_SetUniformInt(sp, UNIFORM_TEXTURE1ENV, GL_REPLACE);
+			} else {
+				GLSL_SetUniformInt(sp, UNIFORM_TEXTURE1ENV, pStage->multitextureEnv);
+			}
+
 			R_BindAnimatedImageToTMU( &pStage->bundle[1], 1 );
 		}
 		else 
@@ -1351,6 +1796,8 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			// set state
 			//
 			R_BindAnimatedImageToTMU( &pStage->bundle[0], 0 );
+
+			GLSL_SetUniformInt(sp, UNIFORM_TEXTURE1ENV, 0);
 		}
 
 		//
@@ -1377,6 +1824,17 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		// draw
 		//
 		R_DrawElements(input->numIndexes, input->firstIndex);
+
+		if ( overridealpha )
+		{
+			pStage->alphaGen = oldAlphaGen;
+			pStage->stateBits = oldStateBits;
+		}
+
+		if ( overridecolor )
+		{
+			pStage->rgbGen = oldRgbGen;
+		}
 
 		// allow skipping out to show just lightmaps during development
 		if ( r_lightmap->integer && ( pStage->bundle[0].isLightmap || pStage->bundle[1].isLightmap ) )
@@ -1429,6 +1887,24 @@ static void RB_RenderShadowmap( shaderCommands_t *input )
 		{
 			GLSL_SetUniformFloat5(sp, UNIFORM_DEFORMPARAMS, deformParams);
 			GLSL_SetUniformFloat(sp, UNIFORM_TIME, tess.shaderTime);
+
+			if (tess.shader->deforms[0].deformationWave.frequency < 0)
+			{
+				vec3_t worldUp;
+				vec3_t fireRiseDir = { 0, 0, 1 };
+
+				if ( !VectorCompare( backEnd.currentEntity->e.fireRiseDir, vec3_origin ) ) {
+					VectorCopy( backEnd.currentEntity->e.fireRiseDir, fireRiseDir );
+				}
+
+				if ( backEnd.currentEntity != &tr.worldEntity ) {    // world surfaces dont have an axis
+					VectorRotate( fireRiseDir, backEnd.currentEntity->e.axis, worldUp );
+				} else {
+					VectorCopy( fireRiseDir, worldUp );
+				}
+
+				GLSL_SetUniformVec3(sp, UNIFORM_FIRERISEDIR, worldUp);
+			}
 		}
 
 		VectorCopy(backEnd.viewParms.or.origin, vector);
@@ -1526,6 +2002,7 @@ void RB_StageIteratorGeneric( void )
 	if ( input->shader->polygonOffset )
 	{
 		qglEnable( GL_POLYGON_OFFSET_FILL );
+		qglPolygonOffset( r_offsetFactor->value, r_offsetUnits->value );
 	}
 
 	//
@@ -1576,7 +2053,7 @@ void RB_StageIteratorGeneric( void )
 	// pshadows!
 	//
 	if (glRefConfig.framebufferObject && r_shadows->integer == 4 && tess.pshadowBits
-		&& tess.shader->sort <= SS_OPAQUE && !(tess.shader->surfaceFlags & (SURF_NODLIGHT | SURF_SKY) ) ) {
+		&& tess.shader->sort <= SS_OPAQUE && !(tess.shader->surfaceParms & (SURF_NODLIGHT | SURF_SKY) ) ) {
 		ProjectPshadowVBOGLSL();
 	}
 
@@ -1585,7 +2062,7 @@ void RB_StageIteratorGeneric( void )
 	// now do any dynamic lighting needed
 	//
 	if ( tess.dlightBits && tess.shader->sort <= SS_OPAQUE && r_lightmap->integer == 0
-		&& !(tess.shader->surfaceFlags & (SURF_NODLIGHT | SURF_SKY) ) ) {
+		&& !(tess.shader->surfaceParms & (SURF_NODLIGHT | SURF_SKY) ) ) {
 		if (tess.shader->numUnfoggedPasses == 1 && tess.xstages[0]->glslShaderGroup == tr.lightallShader
 			&& (tess.xstages[0]->glslShaderIndex & LIGHTDEF_LIGHTTYPE_MASK) && r_dlightMode->integer)
 		{

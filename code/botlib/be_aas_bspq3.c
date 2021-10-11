@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 
@@ -31,21 +39,12 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "../qcommon/q_shared.h"
 #include "l_memory.h"
-#include "l_script.h"
-#include "l_precomp.h"
-#include "l_struct.h"
 #include "aasfile.h"
 #include "botlib.h"
 #include "be_aas.h"
 #include "be_aas_funcs.h"
+#include "be_interface.h"
 #include "be_aas_def.h"
-
-extern botlib_import_t botimport;
-
-//#define TRACE_DEBUG
-
-#define ON_EPSILON		0.005
-//#define DEG2RAD( a ) (( a * M_PI ) / 180.0F)
 
 #define MAX_BSPENTITIES		2048
 
@@ -75,9 +74,6 @@ typedef struct bsp_s
 {
 	//true when bsp file is loaded
 	int loaded;
-	//entity data
-	int entdatasize;
-	char *dentdata;
 	//bsp entities
 	int numentities;
 	bsp_entity_t entities[MAX_BSPENTITIES];
@@ -87,56 +83,6 @@ typedef struct bsp_s
 bsp_t bspworld;
 
 
-#ifdef BSP_DEBUG
-typedef struct cname_s
-{
-	int value;
-	char *name;
-} cname_t;
-
-cname_t contentnames[] =
-{
-	{CONTENTS_SOLID,"CONTENTS_SOLID"},
-	{CONTENTS_WINDOW,"CONTENTS_WINDOW"},
-	{CONTENTS_AUX,"CONTENTS_AUX"},
-	{CONTENTS_LAVA,"CONTENTS_LAVA"},
-	{CONTENTS_SLIME,"CONTENTS_SLIME"},
-	{CONTENTS_WATER,"CONTENTS_WATER"},
-	{CONTENTS_MIST,"CONTENTS_MIST"},
-	{LAST_VISIBLE_CONTENTS,"LAST_VISIBLE_CONTENTS"},
-
-	{CONTENTS_AREAPORTAL,"CONTENTS_AREAPORTAL"},
-	{CONTENTS_PLAYERCLIP,"CONTENTS_PLAYERCLIP"},
-	{CONTENTS_MONSTERCLIP,"CONTENTS_MONSTERCLIP"},
-	{CONTENTS_CURRENT_0,"CONTENTS_CURRENT_0"},
-	{CONTENTS_CURRENT_90,"CONTENTS_CURRENT_90"},
-	{CONTENTS_CURRENT_180,"CONTENTS_CURRENT_180"},
-	{CONTENTS_CURRENT_270,"CONTENTS_CURRENT_270"},
-	{CONTENTS_CURRENT_UP,"CONTENTS_CURRENT_UP"},
-	{CONTENTS_CURRENT_DOWN,"CONTENTS_CURRENT_DOWN"},
-	{CONTENTS_ORIGIN,"CONTENTS_ORIGIN"},
-	{CONTENTS_MONSTER,"CONTENTS_MONSTER"},
-	{CONTENTS_DEADMONSTER,"CONTENTS_DEADMONSTER"},
-	{CONTENTS_DETAIL,"CONTENTS_DETAIL"},
-	{CONTENTS_TRANSLUCENT,"CONTENTS_TRANSLUCENT"},
-	{CONTENTS_LADDER,"CONTENTS_LADDER"},
-	{0, 0}
-};
-
-void PrintContents(int contents)
-{
-	int i;
-
-	for (i = 0; contentnames[i].value; i++)
-	{
-		if (contents & contentnames[i].value)
-		{
-			botimport.Print(PRT_MESSAGE, "%s\n", contentnames[i].name);
-		} //end if
-	} //end for
-} //end of the function PrintContents
-
-#endif // BSP_DEBUG
 //===========================================================================
 // traces axial boxes of any size through the world
 //
@@ -378,68 +324,73 @@ void AAS_FreeBSPEntities(void)
 //===========================================================================
 void AAS_ParseBSPEntities(void)
 {
-	script_t *script;
-	token_t token;
-	bsp_entity_t *ent;
-	bsp_epair_t *epair;
-
-	script = LoadScriptMemory(bspworld.dentdata, bspworld.entdatasize, "entdata");
-	SetScriptFlags(script, SCFL_NOSTRINGWHITESPACES|SCFL_NOSTRINGESCAPECHARS);//SCFL_PRIMITIVE);
+	char		keyname[MAX_TOKEN_CHARS];
+	char		com_token[MAX_TOKEN_CHARS];
+	bsp_entity_t    *ent;
+	bsp_epair_t     *epair;
+	int			offset;
 
 	bspworld.numentities = 1;
+	offset = 0;
 
-	while(PS_ReadToken(script, &token))
-	{
-		if (strcmp(token.string, "{"))
-		{
-			ScriptError(script, "invalid %s", token.string);
-			AAS_FreeBSPEntities();
-			FreeScript(script);
-			return;
-		} //end if
-		if (bspworld.numentities >= MAX_BSPENTITIES)
-		{
-			botimport.Print(PRT_MESSAGE, "too many entities in BSP file\n");
+	while ( 1 ) {
+		// parse the opening brace
+		if ( !botimport.GetEntityToken( &offset, com_token, sizeof( com_token ) ) ) {
+			// end of spawn string
 			break;
-		} //end if
+		}
+		if ( com_token[0] != '{' ) {
+			AAS_FreeBSPEntities();
+			botimport.Print( PRT_ERROR, "AAS_ParseBSPEntities: found %s when expecting {\n", com_token );
+			break;
+		}
+
+		if ( bspworld.numentities >= MAX_BSPENTITIES ) {
+			botimport.Print( PRT_WARNING, "AAS_ParseBSPEntities: too many entities in BSP file\n" );
+			break;
+		}
+
 		ent = &bspworld.entities[bspworld.numentities];
 		bspworld.numentities++;
 		ent->epairs = NULL;
-		while(PS_ReadToken(script, &token))
-		{
-			if (!strcmp(token.string, "}")) break;
+
+		// go through all the key / value pairs
+		while ( 1 ) {
+			// parse key
+			if ( !botimport.GetEntityToken( &offset, keyname, sizeof( keyname ) ) ) {
+				AAS_FreeBSPEntities();
+				botimport.Print( PRT_ERROR, "AAS_ParseBSPEntities: EOF without closing brace\n" );
+				return;
+			}
+
+			if ( keyname[0] == '}' ) {
+				break;
+			}
+
+			// parse value
+			if ( !botimport.GetEntityToken( &offset, com_token, sizeof( com_token ) ) ) {
+				AAS_FreeBSPEntities();
+				botimport.Print( PRT_ERROR, "AAS_ParseBSPEntities: EOF without closing brace\n" );
+				return;
+			}
+
+			if ( com_token[0] == '}' ) {
+				AAS_FreeBSPEntities();
+				botimport.Print( PRT_ERROR, "AAS_ParseBSPEntities: closing brace without data\n" );
+				return;
+			}
+
 			epair = (bsp_epair_t *) GetClearedHunkMemory(sizeof(bsp_epair_t));
 			epair->next = ent->epairs;
 			ent->epairs = epair;
-			if (token.type != TT_STRING)
-			{
-				ScriptError(script, "invalid %s", token.string);
-				AAS_FreeBSPEntities();
-				FreeScript(script);
-				return;
-			} //end if
-			StripDoubleQuotes(token.string);
-			epair->key = (char *) GetHunkMemory(strlen(token.string) + 1);
-			strcpy(epair->key, token.string);
-			if (!PS_ExpectTokenType(script, TT_STRING, 0, &token))
-			{
-				AAS_FreeBSPEntities();
-				FreeScript(script);
-				return;
-			} //end if
-			StripDoubleQuotes(token.string);
-			epair->value = (char *) GetHunkMemory(strlen(token.string) + 1);
-			strcpy(epair->value, token.string);
-		} //end while
-		if (strcmp(token.string, "}"))
-		{
-			ScriptError(script, "missing }");
-			AAS_FreeBSPEntities();
-			FreeScript(script);
-			return;
-		} //end if
-	} //end while
-	FreeScript(script);
+
+			epair->key = (char *) GetHunkMemory(strlen(keyname) + 1);
+			strcpy(epair->key, keyname);
+
+			epair->value = (char *) GetHunkMemory(strlen(com_token) + 1);
+			strcpy(epair->value, com_token);
+		}
+	}
 } //end of the function AAS_ParseBSPEntities
 //===========================================================================
 //
@@ -460,12 +411,6 @@ int AAS_BSPTraceLight(vec3_t start, vec3_t end, vec3_t endpos, int *red, int *gr
 void AAS_DumpBSPData(void)
 {
 	AAS_FreeBSPEntities();
-
-	if (bspworld.dentdata) FreeMemory(bspworld.dentdata);
-	bspworld.dentdata = NULL;
-	bspworld.entdatasize = 0;
-	//
-	bspworld.loaded = qfalse;
 	Com_Memset( &bspworld, 0, sizeof(bspworld) );
 } //end of the function AAS_DumpBSPData
 //===========================================================================
@@ -478,9 +423,6 @@ void AAS_DumpBSPData(void)
 int AAS_LoadBSPFile(void)
 {
 	AAS_DumpBSPData();
-	bspworld.entdatasize = strlen(botimport.BSPEntityData()) + 1;
-	bspworld.dentdata = (char *) GetClearedHunkMemory(bspworld.entdatasize);
-	Com_Memcpy(bspworld.dentdata, botimport.BSPEntityData(), bspworld.entdatasize);
 	AAS_ParseBSPEntities();
 	bspworld.loaded = qtrue;
 	return BLERR_NOERROR;

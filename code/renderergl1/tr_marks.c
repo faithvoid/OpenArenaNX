@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 // tr_marks.c -- polygon projection on the world polygons
@@ -127,24 +135,183 @@ static void R_ChopPolyBehindPlane( int numInPoints, vec3_t inPoints[MAX_VERTS_ON
 
 /*
 =================
+R_AddSurfaceToList
+
+mins and maxs needs to be in bmodel local space
+=================
+*/
+void R_AddSurfaceToList( int bmodelNum, msurface_t *surf, vec3_t mins, vec3_t maxs, surfaceType_t **list, int *listbmodel, int listsize, int *listlength, vec3_t dir ) {
+	int s;
+
+	if (*listlength >= listsize)
+		return;
+
+	// check if the surface has NOIMPACT or NOMARKS set
+	if ( surf->shader->surfaceParms & ( SURF_NOIMPACT | SURF_NOMARKS | SURF_FOG ) ) {
+		surf->viewCount = tr.viewCount;
+	}
+	// extra check for surfaces to avoid list overflows
+	else if (*(surf->data) == SF_TRIANGLES && (( srfTriangles_t * ) surf->data)->planar) {
+		// the face plane should go through the box
+		s = BoxOnPlaneSide( mins, maxs, &(( srfTriangles_t * ) surf->data)->plane );
+		if (s == 1 || s == 2) {
+			surf->viewCount = tr.viewCount;
+		} else if (DotProduct((( srfTriangles_t * ) surf->data)->plane.normal, dir) > -0.5) {
+		// don't add faces that make sharp angles with the projection direction
+			surf->viewCount = tr.viewCount;
+		}
+	}
+	else if (*(surfaceType_t *) (surf->data) != SF_GRID &&
+		 *(surfaceType_t *) (surf->data) != SF_TRIANGLES)
+		surf->viewCount = tr.viewCount;
+	// check the viewCount because the surface may have
+	// already been added if it spans multiple leafs
+	if (surf->viewCount != tr.viewCount) {
+		surf->viewCount = tr.viewCount;
+		list[*listlength] = (surfaceType_t *) surf->data;
+		listbmodel[*listlength] = bmodelNum;
+		(*listlength)++;
+	}
+}
+
+/*
+=================
+R_BmodelSurfaces
+
+mins and maxs needs to be in local space for R_AddSurfaceToList
+=================
+*/
+void R_BmodelSurfaces(int bmodelNum, vec3_t mins, vec3_t maxs, surfaceType_t **list, int *listbmodel, int listsize, int *listlength, vec3_t dir) {
+	int i, j;
+	msurface_t	*surf;
+	bmodel_t *bmodel = &tr.world->bmodels[bmodelNum];
+	const float	*bmins = bmodel->bounds[ 0 ];
+	const float	*bmaxs = bmodel->bounds[ 1 ];
+
+	for ( j = 0; j < 3; j++ )
+	{
+		if ( bmins[ j ] > maxs[ j ] ) {
+			break;
+		}
+		if ( bmaxs[ j ] < mins[ j ] ) {
+			break;
+		}
+	}
+
+	if ( j != 3 ) {
+		// not touching
+		return;
+	}
+
+	// add model surfaces
+	for ( i = 0; i < bmodel->numSurfaces; i++ ) {
+		if (*listlength >= listsize) break;
+
+		surf = ( msurface_t * )( bmodel->firstSurface + i );
+
+		R_AddSurfaceToList( bmodelNum, surf, mins, maxs, list, listbmodel, listsize, listlength, dir );
+	}
+}
+
+// XXX tr_scene.c
+int R_RefEntityForBmodelNum( int bmodelNum );
+
+/*
+=================
+R_GetBmodelInfo
+=================
+*/
+void R_GetBmodelInfo( int bmodelNum, int *pEntityNum, vec3_t origin, vec3_t axis[3] ) {
+	int entityNum;
+
+	entityNum = R_RefEntityForBmodelNum( bmodelNum );
+
+	if ( pEntityNum ) {
+		*pEntityNum = entityNum;
+	}
+
+	if ( entityNum == -1 ) {
+		bmodel_t *bmodel;
+
+		bmodel = &tr.world->bmodels[bmodelNum];
+
+		// not added this scene, use last valid data
+		// this is bad, mark might not be on brush
+		//ri.Printf( PRINT_ALL, "DEBUG: bmodel %d not added this scene\n", bmodelNum );
+
+		VectorCopy( bmodel->orientation.origin, origin );
+		VectorCopy( bmodel->orientation.axis[0], axis[0] );
+		VectorCopy( bmodel->orientation.axis[1], axis[1] );
+		VectorCopy( bmodel->orientation.axis[2], axis[2] );
+	} else {
+		// ZTM: TODO: remove this code or fix stuff so it's actually used? player shadow and bullet marks don't use it.
+		trRefEntity_t *ent;
+
+		ent = &backEndData->entities[entityNum];
+
+		VectorCopy( ent->e.origin, origin );
+		VectorCopy( ent->e.axis[0], axis[0] );
+		VectorCopy( ent->e.axis[1], axis[1] );
+		VectorCopy( ent->e.axis[2], axis[2] );
+	}
+}
+
+/*
+=================
+R_TransformMarkProjection
+
+transform world space data to bmodel local space
+=================
+*/
+void R_TransformMarkProjection( int bmodelNum, const vec3_t inProjection, vec3_t outProjection, int numPlanes, vec3_t *inNormals, float *inDists, vec3_t *outNormals, float *outDists ) {
+	int i;
+	int entityNum;
+	vec3_t origin, axis[3];
+
+	R_GetBmodelInfo( bmodelNum, &entityNum, origin, axis );
+
+	if ( entityNum == REFENTITYNUM_WORLD ) {
+		for ( i = 0; i < numPlanes; i++ ) {
+			VectorCopy( inNormals[i], outNormals[i] );
+			outDists[i] = inDists[i];
+		}
+
+		VectorCopy( inProjection, outProjection );
+		return;
+	}
+
+	for ( i = 0; i < numPlanes; i++ ) {
+		outNormals[i][0] = DotProduct( inNormals[i], axis[0] );
+		outNormals[i][1] = DotProduct( inNormals[i], axis[1] );
+		outNormals[i][2] = DotProduct( inNormals[i], axis[2] );
+		outDists[i] = inDists[i] - DotProduct( inNormals[i], origin );
+	}
+
+	outProjection[0] = DotProduct( inProjection, axis[0] );
+	outProjection[1] = DotProduct( inProjection, axis[1] );
+	outProjection[2] = DotProduct( inProjection, axis[2] );
+}
+
+/*
+=================
 R_BoxSurfaces_r
 
 =================
 */
-void R_BoxSurfaces_r(mnode_t *node, vec3_t mins, vec3_t maxs, surfaceType_t **list, int listsize, int *listlength, vec3_t dir) {
+void R_BoxSurfaces_r(mnode_t *node, vec3_t mins, vec3_t maxs, surfaceType_t **list, int *listbmodel, int listsize, int *listlength, vec3_t dir) {
 
 	int			s, c;
 	msurface_t	*surf, **mark;
 
 	// do the tail recursion in a loop
-	while ( node->contents == -1 ) {
+	while ( !node->isLeaf ) {
 		s = BoxOnPlaneSide( mins, maxs, node->plane );
 		if (s == 1) {
 			node = node->children[0];
 		} else if (s == 2) {
 			node = node->children[1];
 		} else {
-			R_BoxSurfaces_r(node->children[0], mins, maxs, list, listsize, listlength, dir);
+			R_BoxSurfaces_r(node->children[0], mins, maxs, list, listbmodel, listsize, listlength, dir);
 			node = node->children[1];
 		}
 	}
@@ -157,32 +324,9 @@ void R_BoxSurfaces_r(mnode_t *node, vec3_t mins, vec3_t maxs, surfaceType_t **li
 		if (*listlength >= listsize) break;
 		//
 		surf = *mark;
-		// check if the surface has NOIMPACT or NOMARKS set
-		if ( ( surf->shader->surfaceFlags & ( SURF_NOIMPACT | SURF_NOMARKS ) )
-			|| ( surf->shader->contentFlags & CONTENTS_FOG ) ) {
-			surf->viewCount = tr.viewCount;
-		}
-		// extra check for surfaces to avoid list overflows
-		else if (*(surf->data) == SF_FACE) {
-			// the face plane should go through the box
-			s = BoxOnPlaneSide( mins, maxs, &(( srfSurfaceFace_t * ) surf->data)->plane );
-			if (s == 1 || s == 2) {
-				surf->viewCount = tr.viewCount;
-			} else if (DotProduct((( srfSurfaceFace_t * ) surf->data)->plane.normal, dir) > -0.5) {
-			// don't add faces that make sharp angles with the projection direction
-				surf->viewCount = tr.viewCount;
-			}
-		}
-		else if (*(surfaceType_t *) (surf->data) != SF_GRID &&
-			 *(surfaceType_t *) (surf->data) != SF_TRIANGLES)
-			surf->viewCount = tr.viewCount;
-		// check the viewCount because the surface may have
-		// already been added if it spans multiple leafs
-		if (surf->viewCount != tr.viewCount) {
-			surf->viewCount = tr.viewCount;
-			list[*listlength] = (surfaceType_t *) surf->data;
-			(*listlength)++;
-		}
+
+		R_AddSurfaceToList( 0, surf, mins, maxs, list, listbmodel, listsize, listlength, dir );
+
 		mark++;
 	}
 }
@@ -198,7 +342,7 @@ void R_AddMarkFragments(int numClipPoints, vec3_t clipPoints[2][MAX_VERTS_ON_POL
 				   int maxPoints, vec3_t pointBuffer,
 				   int maxFragments, markFragment_t *fragmentBuffer,
 				   int *returnedPoints, int *returnedFragments,
-				   vec3_t mins, vec3_t maxs) {
+				   vec3_t mins, vec3_t maxs, int bmodelNum, vec3_t projectionDir) {
 	int pingPong, i;
 	markFragment_t	*mf;
 
@@ -240,6 +384,10 @@ void R_AddMarkFragments(int numClipPoints, vec3_t clipPoints[2][MAX_VERTS_ON_POL
 	mf = fragmentBuffer + (*returnedFragments);
 	mf->firstPoint = (*returnedPoints);
 	mf->numPoints = numClipPoints;
+	mf->bmodelNum = bmodelNum;
+	R_GetBmodelInfo( bmodelNum, NULL, mf->bmodelOrigin, mf->bmodelAxis );
+	VectorCopy( projectionDir, mf->projectionDir );
+
 	Com_Memcpy( pointBuffer + (*returnedPoints) * 3, clipPoints[pingPong], numClipPoints * sizeof(vec3_t) );
 
 	(*returnedPoints) += numClipPoints;
@@ -257,20 +405,21 @@ int R_MarkFragments( int numPoints, const vec3_t *points, const vec3_t projectio
 	int				numsurfaces, numPlanes;
 	int				i, j, k, m, n;
 	surfaceType_t	*surfaces[64];
+	int				surfacesBmodel[64];
+	int				lastBmodel;
 	vec3_t			mins, maxs;
 	int				returnedFragments;
 	int				returnedPoints;
-	vec3_t			normals[MAX_VERTS_ON_POLY+2];
-	float			dists[MAX_VERTS_ON_POLY+2];
+	vec3_t			normals[MAX_VERTS_ON_POLY+2], localNormals[MAX_VERTS_ON_POLY+2];
+	float			dists[MAX_VERTS_ON_POLY+2], localDists[MAX_VERTS_ON_POLY+2];
 	vec3_t			clipPoints[2][MAX_VERTS_ON_POLY];
 	int				numClipPoints;
 	float			*v;
 	srfGridMesh_t	*cv;
 	drawVert_t		*dv;
 	vec3_t			normal;
-	vec3_t			projectionDir;
+	vec3_t			projectionDir, localProjectionDir;
 	vec3_t			v1, v2;
-	int				*indexes;
 
 	if (numPoints <= 0) {
 		return 0;
@@ -313,14 +462,56 @@ int R_MarkFragments( int numPoints, const vec3_t *points, const vec3_t projectio
 	numPlanes = numPoints + 2;
 
 	numsurfaces = 0;
-	R_BoxSurfaces_r(tr.world->nodes, mins, maxs, surfaces, 64, &numsurfaces, projectionDir);
+	R_BoxSurfaces_r(tr.world->nodes, mins, maxs, surfaces, surfacesBmodel, 64, &numsurfaces, projectionDir);
 	//assert(numsurfaces <= 64);
 	//assert(numsurfaces != 64);
 
+	if (r_marksOnBrushModels->integer) {
+		// add bmodel surfaces
+		for ( j = 1; j < tr.world->numBModels; j++ ) {
+			vec3_t localProjection, bmodelOrigin, bmodelAxis[3];
+
+			R_TransformMarkProjection( j, projection, localProjection, 0, NULL, NULL, NULL, NULL );
+			R_GetBmodelInfo( j, NULL, bmodelOrigin, bmodelAxis );
+
+			VectorNormalize2( localProjection, localProjectionDir );
+			// find all the brushes that are to be considered
+			ClearBounds( mins, maxs );
+			for ( i = 0 ; i < numPoints ; i++ ) {
+				vec3_t	temp;
+				vec3_t	delta;
+				vec3_t	localPoint;
+
+				// convert point to bmodel local space
+				VectorSubtract( points[i], bmodelOrigin, delta );
+				localPoint[0] = DotProduct( delta, bmodelAxis[0] );
+				localPoint[1] = DotProduct( delta, bmodelAxis[1] );
+				localPoint[2] = DotProduct( delta, bmodelAxis[2] );
+
+				AddPointToBounds( localPoint, mins, maxs );
+				VectorAdd( localPoint, localProjection, temp );
+				AddPointToBounds( temp, mins, maxs );
+				// make sure we get all the leafs (also the one(s) in front of the hit surface)
+				VectorMA( localPoint, -20, localProjectionDir, temp );
+				AddPointToBounds( temp, mins, maxs );
+			}
+
+			R_BmodelSurfaces( j, mins, maxs, surfaces, surfacesBmodel, 64, &numsurfaces, localProjectionDir);
+		}
+	}
+
 	returnedPoints = 0;
 	returnedFragments = 0;
+	lastBmodel = -1;
 
 	for ( i = 0 ; i < numsurfaces ; i++ ) {
+		if (i == 0 || surfacesBmodel[i] != lastBmodel) {
+			R_TransformMarkProjection( surfacesBmodel[i], projectionDir, localProjectionDir, numPlanes, normals, dists, localNormals, localDists );
+			lastBmodel = surfacesBmodel[i];
+
+			// don't use projectionDir, normals, or dists beyond this point !!!
+			// mins and maxs are not setup, so they are not valid !!!
+		}
 
 		if (*surfaces[i] == SF_GRID) {
 
@@ -363,13 +554,13 @@ int R_MarkFragments( int numPoints, const vec3_t *points, const vec3_t projectio
 					VectorSubtract(clipPoints[0][2], clipPoints[0][1], v2);
 					CrossProduct(v1, v2, normal);
 					VectorNormalizeFast(normal);
-					if (DotProduct(normal, projectionDir) < -0.1) {
+					if (DotProduct(normal, localProjectionDir) < -0.1) {
 						// add the fragments of this triangle
 						R_AddMarkFragments(numClipPoints, clipPoints,
-										   numPlanes, normals, dists,
+										   numPlanes, localNormals, localDists,
 										   maxPoints, pointBuffer,
 										   maxFragments, fragmentBuffer,
-										   &returnedPoints, &returnedFragments, mins, maxs);
+										   &returnedPoints, &returnedFragments, mins, maxs, lastBmodel, localProjectionDir);
 
 						if ( returnedFragments == maxFragments ) {
 							return returnedFragments;	// not enough space for more fragments
@@ -387,13 +578,13 @@ int R_MarkFragments( int numPoints, const vec3_t *points, const vec3_t projectio
 					VectorSubtract(clipPoints[0][2], clipPoints[0][1], v2);
 					CrossProduct(v1, v2, normal);
 					VectorNormalizeFast(normal);
-					if (DotProduct(normal, projectionDir) < -0.05) {
+					if (DotProduct(normal, localProjectionDir) < -0.05) {
 						// add the fragments of this triangle
 						R_AddMarkFragments(numClipPoints, clipPoints,
-										   numPlanes, normals, dists,
+										   numPlanes, localNormals, localDists,
 										   maxPoints, pointBuffer,
 										   maxFragments, fragmentBuffer,
-										   &returnedPoints, &returnedFragments, mins, maxs);
+										   &returnedPoints, &returnedFragments, mins, maxs, lastBmodel, localProjectionDir);
 
 						if ( returnedFragments == maxFragments ) {
 							return returnedFragments;	// not enough space for more fragments
@@ -402,36 +593,14 @@ int R_MarkFragments( int numPoints, const vec3_t *points, const vec3_t projectio
 				}
 			}
 		}
-		else if (*surfaces[i] == SF_FACE) {
-
-			srfSurfaceFace_t *surf = ( srfSurfaceFace_t * ) surfaces[i];
-
-			// check the normal of this face
-			if (DotProduct(surf->plane.normal, projectionDir) > -0.5) {
-				continue;
-			}
-
-			indexes = (int *)( (byte *)surf + surf->ofsIndices );
-			for ( k = 0 ; k < surf->numIndices ; k += 3 ) {
-				for ( j = 0 ; j < 3 ; j++ ) {
-					v = &surf->points[0][0] + VERTEXSIZE * indexes[k+j];
-					VectorMA( v, MARKER_OFFSET, surf->plane.normal, clipPoints[0][j] );
-				}
-
-				// add the fragments of this face
-				R_AddMarkFragments( 3 , clipPoints,
-								   numPlanes, normals, dists,
-								   maxPoints, pointBuffer,
-								   maxFragments, fragmentBuffer,
-								   &returnedPoints, &returnedFragments, mins, maxs);
-				if ( returnedFragments == maxFragments ) {
-					return returnedFragments;	// not enough space for more fragments
-				}
-			}
-		}
-		else if(*surfaces[i] == SF_TRIANGLES && r_marksOnTriangleMeshes->integer) {
+		else if(*surfaces[i] == SF_TRIANGLES) {
 
 			srfTriangles_t *surf = (srfTriangles_t *) surfaces[i];
+
+			// Check if there should be marks on this surface
+			if ( !surf->planar && !r_marksOnTriangleMeshes->integer) {
+				continue;
+			}
 
 			for (k = 0; k < surf->numIndexes; k += 3)
 			{
@@ -443,9 +612,9 @@ int R_MarkFragments( int numPoints, const vec3_t *points, const vec3_t projectio
 
 				// add the fragments of this face
 				R_AddMarkFragments(3, clipPoints,
-								   numPlanes, normals, dists,
+								   numPlanes, localNormals, localDists,
 								   maxPoints, pointBuffer,
-								   maxFragments, fragmentBuffer, &returnedPoints, &returnedFragments, mins, maxs);
+								   maxFragments, fragmentBuffer, &returnedPoints, &returnedFragments, mins, maxs, lastBmodel, localProjectionDir);
 				if(returnedFragments == maxFragments)
 				{
 					return returnedFragments;	// not enough space for more fragments

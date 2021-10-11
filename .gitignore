@@ -3,6 +3,7 @@ Makefile.local
 *.swp
 *tags
 *~
+misc/code_blocks/*.layout
 
 # OS X
 ####################
@@ -39,10 +40,3 @@ profile
 *.sdf
 *.opensdf
 *.suo
-OpenArenaNX.nacp
-OpenArenaNX.nro
-OpenArenaNX.nso
-OpenArenaNX.pfs0
-QuakeIII.elf
-VoyagerNX.nacp
-OpenArenaNX.elf

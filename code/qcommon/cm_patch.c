@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 
@@ -72,10 +80,10 @@ typedef struct {
 	int			height;
 	qboolean	wrapWidth;
 	qboolean	wrapHeight;
+	float		subdivideDistance;
 	vec3_t	points[MAX_GRID_SIZE][MAX_GRID_SIZE];	// [width][height]
 } cGrid_t;
 
-#define	SUBDIVIDE_DISTANCE	16	//4	// never more than this units away from curve
 #define	PLANE_TRI_EPSILON	0.1
 #define	WRAP_POINT_EPSILON	0.1
 */
@@ -155,7 +163,7 @@ Returns true if the given quadratic curve is not flat enough for our
 collision detection purposes
 =================
 */
-static qboolean	CM_NeedsSubdivision( vec3_t a, vec3_t b, vec3_t c ) {
+static qboolean	CM_NeedsSubdivision( vec3_t a, vec3_t b, vec3_t c, float subdivideDistance ) {
 	vec3_t		cmid;
 	vec3_t		lmid;
 	vec3_t		delta;
@@ -176,7 +184,7 @@ static qboolean	CM_NeedsSubdivision( vec3_t a, vec3_t b, vec3_t c ) {
 	VectorSubtract( cmid, lmid, delta );
 	dist = VectorLength( delta );
 	
-	return dist >= SUBDIVIDE_DISTANCE;
+	return dist >= subdivideDistance;
 }
 
 /*
@@ -298,7 +306,7 @@ static void CM_SubdivideGridColumns( cGrid_t *grid ) {
 		// first see if we can collapse the aproximating collumn away
 		//
 		for ( j = 0 ; j < grid->height ; j++ ) {
-			if ( CM_NeedsSubdivision( grid->points[i][j], grid->points[i+1][j], grid->points[i+2][j] ) ) {
+			if ( CM_NeedsSubdivision( grid->points[i][j], grid->points[i+1][j], grid->points[i+2][j], grid->subdivideDistance ) ) {
 				break;
 			}
 		}
@@ -827,7 +835,7 @@ void CM_AddFacetBevels( facet_t *facet ) {
 
 	int i, j, k, l;
 	int axis, dir, flipped;
-	float plane[4], d, newplane[4];
+	float plane[4], d, minBack, newplane[4];
 	winding_t *w, *w2;
 	vec3_t mins, maxs, vec, vec2;
 
@@ -899,7 +907,7 @@ void CM_AddFacetBevels( facet_t *facet ) {
 			continue;
 		CM_SnapVector(vec);
 		for ( k = 0; k < 3 ; k++ )
-			if ( vec[k] == -1 || vec[k] == 1 )
+			if ( vec[k] == -1.0f || vec[k] == 1.0f || ( vec[k] == 0.0f && vec[( k + 1 ) % 3] == 0.0f ) )
 				break;	// axial
 		if ( k < 3 )
 			continue;	// only test non-axial edges
@@ -919,14 +927,23 @@ void CM_AddFacetBevels( facet_t *facet ) {
 
 				// if all the points of the facet winding are
 				// behind this plane, it is a proper edge bevel
+				minBack = 0.0f;
 				for ( l = 0 ; l < w->numpoints ; l++ )
 				{
 					d = DotProduct (w->p[l], plane) - plane[3];
 					if (d > 0.1)
 						break;	// point in front
+					if ( d < minBack ) {
+						minBack = d;
+					}
 				}
 				if ( l < w->numpoints )
 					continue;
+
+				// if no points at the back then the winding is on the bevel plane
+				if ( minBack > -0.1f ) {
+					break;
+				}
 
 				//if it's the surface plane
 				if (CM_PlaneEqual(&planes[facet->surfacePlane], plane, &flipped)) {
@@ -1173,7 +1190,7 @@ collision detection with a patch mesh.
 Points is packed as concatenated rows.
 ===================
 */
-struct patchCollide_s	*CM_GeneratePatchCollide( int width, int height, vec3_t *points ) {
+struct patchCollide_s	*CM_GeneratePatchCollide( int width, int height, vec3_t *points, float subdivisions ) {
 	patchCollide_t	*pf;
 	cGrid_t			grid;
 	int				i, j;
@@ -1201,6 +1218,8 @@ struct patchCollide_s	*CM_GeneratePatchCollide( int width, int height, vec3_t *p
 			VectorCopy( points[j*width + i], grid.points[i][j] );
 		}
 	}
+
+	grid.subdivideDistance = subdivisions;
 
 	// subdivide the grid
 	CM_SetGridWrapWidth( &grid );
@@ -1240,6 +1259,201 @@ struct patchCollide_s	*CM_GeneratePatchCollide( int width, int height, vec3_t *p
 
 	return pf;
 }
+
+
+
+/*
+================================================================================
+
+Triangle Soup to patchCollide_s
+
+================================================================================
+*/
+
+/*
+===================
+CM_SetTriangleSoupBorderInward
+===================
+*/
+static void CM_SetTriangleSoupBorderInward( facet_t *facet, float *p1, float *p2, float *p3 )
+{
+	int				k, l;
+	int				numPoints;
+	float			*points[4];
+
+	points[0] = p1;
+	points[1] = p2;
+	points[2] = p3;
+	numPoints = 3;
+
+	for ( k = 0 ; k < facet->numBorders ; k++ ) {
+		int		front, back;
+
+		front = 0;
+		back = 0;
+
+		for ( l = 0 ; l < numPoints ; l++ ) {
+			int		side;
+
+			side = CM_PointOnPlaneSide( points[l], facet->borderPlanes[k] );
+			if ( side == SIDE_FRONT ) {
+				front++;
+			} if ( side == SIDE_BACK ) {
+				back++;
+			}
+		}
+
+		if ( front && !back ) {
+			facet->borderInward[k] = qtrue;
+		} else if ( back && !front ) {
+			facet->borderInward[k] = qfalse;
+		} else if ( !front && !back ) {
+			// flat side border
+			facet->borderPlanes[k] = -1;
+		} else {
+			// bisecting side border
+			Com_DPrintf( "WARNING: CM_SetTriangleSoupBorderInward: mixed plane sides\n" );
+			facet->borderInward[k] = qfalse;
+		}
+	}
+}
+
+/*
+==================
+CM_GenerateBoundaryForPoints
+==================
+*/
+static int CM_GenerateBoundaryForPoints( int surfacePlane, float *p1, float *p2 )
+{
+	vec3_t          up;
+
+	VectorMA( p1, 4, planes[surfacePlane].plane, up );
+
+	return CM_FindPlane( p1, p2, up );
+}
+
+/*
+==================
+CM_PatchCollideFromTriangleSoup
+==================
+*/
+static void CM_PatchCollideFromTriangleSoup( cTriangleSoup_t *triSoup, patchCollide_t *pf ) {
+	int				i;
+	float			*p1, *p2, *p3;
+	int				trianglePlanes[SHADER_MAX_TRIANGLES];
+	facet_t			*facet;
+
+	numPlanes = 0;
+	numFacets = 0;
+
+	// find the planes for each triangle of the grid
+	for( i = 0; i < triSoup->numTriangles ; i++ ) {
+		p1 = triSoup->points[i][0];
+		p2 = triSoup->points[i][1];
+		p3 = triSoup->points[i][2];
+
+		trianglePlanes[i] = CM_FindPlane(p1, p2, p3);
+	}
+
+	// create the borders for each triangle
+	for ( i = 0; i < triSoup->numTriangles ; i++ ) {
+		if ( numFacets == MAX_FACETS ) {
+			Com_Error( ERR_DROP, "MAX_FACETS" );
+		}
+		facet = &facets[numFacets];
+		Com_Memset( facet, 0, sizeof( *facet ) );
+
+		p1 = triSoup->points[i][0];
+		p2 = triSoup->points[i][1];
+		p3 = triSoup->points[i][2];
+
+		facet->surfacePlane = trianglePlanes[i];
+
+		if ( facet->surfacePlane == -1 ) {
+			continue;
+		}
+
+		facet->numBorders = 3;
+
+		facet->borderNoAdjust[0] = qfalse;
+		facet->borderNoAdjust[1] = qfalse;
+		facet->borderNoAdjust[2] = qfalse;
+
+		facet->borderPlanes[0] = CM_GenerateBoundaryForPoints( facet->surfacePlane, p1, p2);
+		facet->borderPlanes[1] = CM_GenerateBoundaryForPoints( facet->surfacePlane, p2, p3);
+		facet->borderPlanes[2] = CM_GenerateBoundaryForPoints( facet->surfacePlane, p3, p1);
+
+		CM_SetTriangleSoupBorderInward( facet, p1, p2, p3 );
+
+		if ( CM_ValidateFacet( facet ) ) {
+			CM_AddFacetBevels( facet );
+			numFacets++;
+		}
+	}
+
+	// copy the results out
+	pf->numPlanes = numPlanes;
+	pf->numFacets = numFacets;
+	pf->facets = Hunk_Alloc( numFacets * sizeof( *pf->facets ), h_high );
+	Com_Memcpy( pf->facets, facets, numFacets * sizeof( *pf->facets ) );
+	pf->planes = Hunk_Alloc( numPlanes * sizeof( *pf->planes ), h_high );
+	Com_Memcpy( pf->planes, planes, numPlanes * sizeof( *pf->planes ) );
+}
+
+/*
+===================
+CM_GenerateTriangleSoupCollide
+
+Creates an internal structure that will be used to perform
+collision detection with a triangle mesh.
+===================
+*/
+struct patchCollide_s	*CM_GenerateTriangleSoupCollide( int numVertexes, vec3_t *vertexes, int numIndexes, int *indexes ) {
+	patchCollide_t	*pf;
+	cTriangleSoup_t	triSoup;
+	int				i, j;
+
+	if ( numVertexes <= 2 || !vertexes || numIndexes <= 2 || !indexes ) {
+		Com_Error(ERR_DROP, "CM_GenerateTriangleSoupCollide: bad parameters: (%i, %p, %i, %p)", numVertexes, vertexes, numIndexes,
+				  indexes);
+	}
+
+	if ( numIndexes > SHADER_MAX_INDEXES ) {
+		Com_Error(ERR_DROP, "CM_GenerateTriangleSoupCollide: source is > SHADER_MAX_TRIANGLES");
+	}
+
+	// build a triangle soup
+	triSoup.numTriangles = numIndexes / 3;
+	for ( i = 0; i < triSoup.numTriangles ; i++ ) {
+		for ( j = 0; j < 3 ; j++ ) {
+			VectorCopy( vertexes[indexes[i * 3 + j]], triSoup.points[i][j] );
+		}
+	}
+
+	pf = Hunk_Alloc( sizeof( *pf ), h_high );
+	ClearBounds( pf->bounds[0], pf->bounds[1] );
+	for ( i = 0; i < triSoup.numTriangles ; i++ ) {
+		for ( j = 0; j < 3 ; j++ ) {
+			AddPointToBounds( triSoup.points[i][j], pf->bounds[0], pf->bounds[1] );
+		}
+	}
+
+	// generate a bsp tree for the surface
+	CM_PatchCollideFromTriangleSoup( &triSoup, pf );
+
+	// expand by one unit for epsilon purposes
+	pf->bounds[0][0] -= 1;
+	pf->bounds[0][1] -= 1;
+	pf->bounds[0][2] -= 1;
+
+	pf->bounds[1][0] += 1;
+	pf->bounds[1][1] += 1;
+	pf->bounds[1][2] += 1;
+
+	return pf;
+}
+
+
 
 /*
 ================================================================================
@@ -1432,7 +1646,7 @@ void CM_TraceThroughPatchCollide( traceWork_t *tw, const struct patchCollide_s *
 		planes = &pc->planes[ facet->surfacePlane ];
 		VectorCopy(planes->plane, plane);
 		plane[3] = planes->plane[3];
-		if ( tw->sphere.use ) {
+		if ( tw->type == TT_CAPSULE ) {
 			// adjust the plane distance appropriately for radius
 			plane[3] += tw->sphere.radius;
 
@@ -1471,7 +1685,7 @@ void CM_TraceThroughPatchCollide( traceWork_t *tw, const struct patchCollide_s *
 				VectorCopy(planes->plane, plane);
 				plane[3] = planes->plane[3];
 			}
-			if ( tw->sphere.use ) {
+			if ( tw->type == TT_CAPSULE ) {
 				// adjust the plane distance appropriately for radius
 				plane[3] += tw->sphere.radius;
 
@@ -1560,7 +1774,7 @@ qboolean CM_PositionTestInPatchCollide( traceWork_t *tw, const struct patchColli
 		planes = &pc->planes[ facet->surfacePlane ];
 		VectorCopy(planes->plane, plane);
 		plane[3] = planes->plane[3];
-		if ( tw->sphere.use ) {
+		if ( tw->type == TT_CAPSULE ) {
 			// adjust the plane distance appropriately for radius
 			plane[3] += tw->sphere.radius;
 
@@ -1593,7 +1807,7 @@ qboolean CM_PositionTestInPatchCollide( traceWork_t *tw, const struct patchColli
 				VectorCopy(planes->plane, plane);
 				plane[3] = planes->plane[3];
 			}
-			if ( tw->sphere.use ) {
+			if ( tw->type == TT_CAPSULE ) {
 				// adjust the plane distance appropriately for radius
 				plane[3] += tw->sphere.radius;
 
@@ -1642,15 +1856,8 @@ CM_DrawDebugSurface
 Called from the renderer
 ==================
 */
-#ifndef BSPC
-void BotDrawDebugPolygons(void (*drawPoly)(int color, int numPoints, float *points), int value);
-#endif
-
 void CM_DrawDebugSurface( void (*drawPoly)(int color, int numPoints, float *points) ) {
 	static cvar_t	*cv;
-#ifndef BSPC
-	static cvar_t	*cv2;
-#endif
 	const patchCollide_t	*pc;
 	facet_t			*facet;
 	winding_t		*w;
@@ -1660,19 +1867,6 @@ void CM_DrawDebugSurface( void (*drawPoly)(int color, int numPoints, float *poin
 	vec3_t mins = {-15, -15, -28}, maxs = {15, 15, 28};
 	//vec3_t mins = {0, 0, 0}, maxs = {0, 0, 0};
 	vec3_t v1, v2;
-
-#ifndef BSPC
-	if ( !cv2 )
-	{
-		cv2 = Cvar_Get( "r_debugSurface", "0", 0 );
-	}
-
-	if (cv2->integer != 1)
-	{
-		BotDrawDebugPolygons(drawPoly, cv2->integer);
-		return;
-	}
-#endif
 
 	if ( !debugPatchCollide ) {
 		return;

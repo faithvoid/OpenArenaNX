@@ -1,30 +1,45 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 #ifndef __TR_PUBLIC_H
 #define __TR_PUBLIC_H
 
 #include "tr_types.h"
+#include "../qcommon/bsp.h"
 
-#define	REF_API_VERSION		8
+#ifdef USE_LOCAL_HEADERS
+  #include "../zlib/zlib.h"
+#else
+  #include <zlib.h>
+#endif
+
+#define	REF_API_VERSION		9
 
 //
 // these are the functions exported by the refresh module
@@ -34,6 +49,9 @@ typedef struct {
 	// if the system is just reconfiguring, pass destroyWindow = qfalse,
 	// which will keep the screen from flashing to the desktop.
 	void	(*Shutdown)( qboolean destroyWindow );
+
+	//
+	qboolean	(*ResizeWindow)( int width, int height );
 
 	// All data that will be used in a level should be
 	// registered before rendering any frames to prevent disk hits,
@@ -46,10 +64,11 @@ typedef struct {
 	// size display elements
 	void	(*BeginRegistration)( glconfig_t *config );
 	qhandle_t (*RegisterModel)( const char *name );
-	qhandle_t (*RegisterSkin)( const char *name );
+	qhandle_t (*RegisterShaderEx)( const char *name, int lightmap, qboolean mip );
 	qhandle_t (*RegisterShader)( const char *name );
 	qhandle_t (*RegisterShaderNoMip)( const char *name );
-	void	(*LoadWorld)( const char *name );
+	qhandle_t (*AllocSkinSurface)( const char *name, qhandle_t hShader );
+	void	(*LoadWorld)( const bspFile_t *bsp );
 
 	// the vis data is a large enough block of data that we go to the trouble
 	// of sharing it with the clipmodel subsystem
@@ -62,22 +81,31 @@ typedef struct {
 	// a scene is built up by calls to R_ClearScene and the various R_Add functions.
 	// Nothing is drawn until R_RenderScene is called.
 	void	(*ClearScene)( void );
-	void	(*AddRefEntityToScene)( const refEntity_t *re );
-	void	(*AddPolyToScene)( qhandle_t hShader , int numVerts, const polyVert_t *verts, int num );
+	void	(*AddRefEntityToScene)( const refEntity_t *re, int bufsize, int numVerts, const polyVert_t *verts, int numPolys );
+	void	(*AddPolyToScene)( qhandle_t hShader , int numVerts, const polyVert_t *verts, int numPolys, int bmodelNum, int sortLevel );
+	void	(*AddPolyBufferToScene)( polyBuffer_t* pPolyBuffer );
 	int		(*LightForPoint)( vec3_t point, vec3_t ambientLight, vec3_t directedLight, vec3_t lightDir );
-	void	(*AddLightToScene)( const vec3_t org, float intensity, float r, float g, float b );
-	void	(*AddAdditiveLightToScene)( const vec3_t org, float intensity, float r, float g, float b );
-	void	(*RenderScene)( const refdef_t *fd );
+	void	(*AddLightToScene)( const vec3_t org, float radius, float intensity, float r, float g, float b, qhandle_t hShader );
+	void	(*AddAdditiveLightToScene)( const vec3_t org, float radius, float intensity, float r, float g, float b );
+	void	(*AddVertexLightToScene)( const vec3_t org, float radius, float intensity, float r, float g, float b );
+	void	(*AddJuniorLightToScene)( const vec3_t org, float radius, float intensity, float r, float g, float b );
+	void	(*AddDirectedLightToScene)( const vec3_t normal, float intensity, float r, float g, float b );
+	void	(*AddCoronaToScene)( const vec3_t org, float r, float g, float b, float scale, int id, qboolean visible, qhandle_t hShader );
+	void	(*RenderScene)( const refdef_t *fd, int bufsize );
 
 	void	(*SetColor)( const float *rgba );	// NULL = 1,1,1,1
-	void	(*DrawStretchPic) ( float x, float y, float w, float h, 
-		float s1, float t1, float s2, float t2, qhandle_t hShader );	// 0 = white
+	void	(*SetClipRegion)( const float *region );
+	void	(*DrawStretchPic)( float x, float y, float w, float h, float s1, float t1, float s2, float t2, qhandle_t hShader );	// 0 = white
+	void	(*DrawRotatedPic)( float x, float y, float w, float h, float s1, float t1, float s2, float t2, qhandle_t hShader, float angle );
+	void	(*DrawStretchPicGradient)( float x, float y, float w, float h, float s1, float t1, float s2, float t2, qhandle_t hShader, const float *gradientColor );
+	void	(*Add2dPolys)( polyVert_t* polys, int numverts, qhandle_t hShader );
 
 	// Draw images for cinematic rendering, pass as 32 bit rgba
 	void	(*DrawStretchRaw) (int x, int y, int w, int h, int cols, int rows, const byte *data, int client, qboolean dirty);
 	void	(*UploadCinematic) (int w, int h, int cols, int rows, const byte *data, int client, qboolean dirty);
 
 	void	(*BeginFrame)( stereoFrame_t stereoFrame );
+	qhandle_t (*AddSkinToFrame)( int numSurfaces, const qhandle_t *surfaces );
 
 	// if the pointers are not NULL, timing info will be returned
 	void	(*EndFrame)( int *frontEndMsec, int *backEndMsec );
@@ -86,19 +114,28 @@ typedef struct {
 	int		(*MarkFragments)( int numPoints, const vec3_t *points, const vec3_t projection,
 				   int maxPoints, vec3_t pointBuffer, int maxFragments, markFragment_t *fragmentBuffer );
 
-	int		(*LerpTag)( orientation_t *tag,  qhandle_t model, int startFrame, int endFrame, 
-					 float frac, const char *tagName );
-	void	(*ModelBounds)( qhandle_t model, vec3_t mins, vec3_t maxs );
+	int		(*LerpTag)( orientation_t *tag,  qhandle_t model, qhandle_t frameModel, int startFrame, qhandle_t endFrameModel, int endFrame,
+					 float frac, const char *tagName, int *tagIndex, const vec3_t *torsoAxis, qhandle_t torsoFrameModel, int torsoFrame,
+					 qhandle_t oldTorsoFrameModel, int oldTorsoFrame, float torsoFrac );
+	int		(*ModelBounds)( qhandle_t model, vec3_t mins, vec3_t maxs, int startFrame, int endFrame, float frac );
 
 #ifdef __USEA3D
 	void    (*A3D_RenderGeometry) (void *pVoidA3D, void *pVoidGeom, void *pVoidMat, void *pVoidGeomStatus);
 #endif
-	void	(*RegisterFont)(const char *fontName, int pointSize, fontInfo_t *font);
+	void	(*RegisterFont)(const char *fontName, int pointSize, float borderWidth, qboolean forceAutoHint, fontInfo_t *font, int bufsize);
 	void	(*RemapShader)(const char *oldShader, const char *newShader, const char *offsetTime);
 	qboolean (*GetEntityToken)( char *buffer, int size );
 	qboolean (*inPVS)( const vec3_t p1, const vec3_t p2 );
 
 	void (*TakeVideoFrame)( int h, int w, byte* captureBuffer, byte *encodeBuffer, qboolean motionJpeg );
+
+	void (*GetGlobalFog)( fogType_t *type, vec3_t color, float *depthForOpaque, float *density, float *farClip );
+	void (*GetViewFog)( const vec3_t origin, fogType_t *type, vec3_t color, float *depthForOpaque, float *density, float *farClip, qboolean inwater );
+
+	void (*SetSurfaceShader)( int surfaceNum, const char *name );
+	qhandle_t (*GetSurfaceShader)( int surfaceNum, int lightmapIndex );
+	qhandle_t (*GetShaderFromModel)( qhandle_t hModel, int surfnum, int lightmapIndex );
+	void (*GetShaderName)( qhandle_t hShader, char *buffer, int bufferSize );
 } refexport_t;
 
 //
@@ -125,17 +162,27 @@ typedef struct {
 	void	*(*Hunk_AllocateTempMemory)( int size );
 	void	(*Hunk_FreeTempMemory)( void *block );
 
+#ifdef ZONE_DEBUG
+#define Malloc(size)					MallocDebug(size, #size, __FILE__, __LINE__)
+#define Free(ptr)						FreeDebug(ptr, #ptr, __FILE__, __LINE__)
+	// dynamic memory allocator for things that need to be freed
+	void	*(*MallocDebug)( int bytes, char *label, char *file, int line );
+	void	(*FreeDebug)( void *buf, char *label, char *file, int line );
+#else
 	// dynamic memory allocator for things that need to be freed
 	void	*(*Malloc)( int bytes );
 	void	(*Free)( void *buf );
+#endif
 
 	cvar_t	*(*Cvar_Get)( const char *name, const char *value, int flags );
-	void	(*Cvar_Set)( const char *name, const char *value );
-	void	(*Cvar_SetValue) (const char *name, float value);
+	cvar_t	*(*Cvar_Set)( const char *name, const char *value );
+	cvar_t	*(*Cvar_SetValue) (const char *name, float value);
 	void	(*Cvar_CheckRange)( cvar_t *cv, float minVal, float maxVal, qboolean shouldBeIntegral );
 	void	(*Cvar_SetDescription)( cvar_t *cv, const char *description );
 
 	int		(*Cvar_VariableIntegerValue) (const char *var_name);
+
+	void	(*Cvar_VariableStringBuffer) (const char *var_name, char *buffer, int bufsize);
 
 	void	(*Cmd_AddCommand)( const char *name, void(*cmd)(void) );
 	void	(*Cmd_RemoveCommand)( const char *name );
@@ -149,11 +196,11 @@ typedef struct {
 
 	// visualization for debugging collision detection
 	void	(*CM_DrawDebugSurface)( void (*drawPoly)(int color, int numPoints, float *points) );
+	void	(*SV_BotDrawDebugPolygons)( void (*drawPoly)(int color, int numPoints, float *points) );
 
 	// a -1 return means the file does not exist
 	// NULL can be passed for buf to just determine existence
-	int		(*FS_FileIsInPAK)( const char *name, int *pCheckSum );
-	long		(*FS_ReadFile)( const char *name, void **buf );
+	long	(*FS_ReadFile)( const char *name, void **buf );
 	void	(*FS_FreeFile)( void *buf );
 	char **	(*FS_ListFiles)( const char *name, const char *extension, int *numfilesfound );
 	void	(*FS_FreeFileList)( char **filelist );
@@ -166,6 +213,7 @@ typedef struct {
 	e_status (*CIN_RunCinematic) (int handle);
 
 	void	(*CL_WriteAVIVideoFrame)( const byte *buffer, int size );
+	int		(*CL_MaxSplitView)( void );
 
 	// input event handling
 	void	(*IN_Init)( void *windowData );
@@ -180,6 +228,16 @@ typedef struct {
 	void	(*Sys_GLimpSafeInit)( void );
 	void	(*Sys_GLimpInit)( void );
 	qboolean (*Sys_LowPhysicalMemory)( void );
+
+	// zlib for png screenshots
+	int (*zlib_compress) (Bytef *dest, uLongf *destLen, const Bytef *source, uLong sourceLen);
+	uLong (*zlib_crc32) (uLong crc, const Bytef *buf, uInt len);
+
+	void (*CL_GlconfigChanged)( const glconfig_t *glconfig );
+
+	// get extra info for png screenshots
+	void	(*CL_GetMapTitle)( char *buf, int bufLength );
+	qboolean (*CL_GetLocalPlayerLocation)( char *buf, int bufLength, int localPlayerNum );
 } refimport_t;
 
 
@@ -187,9 +245,9 @@ typedef struct {
 // If the module can't init to a valid rendering state, NULL will be
 // returned.
 #ifdef USE_RENDERER_DLOPEN
-typedef	refexport_t* (QDECL *GetRefAPI_t) (int apiVersion, refimport_t * rimp);
+typedef	refexport_t* (QDECL *GetRefAPI_t) (int apiVersion, refimport_t * rimp, qboolean headless);
 #else
-refexport_t*GetRefAPI( int apiVersion, refimport_t *rimp );
+refexport_t*GetRefAPI( int apiVersion, refimport_t *rimp, qboolean headless );
 #endif
 
 #endif	// __TR_PUBLIC_H

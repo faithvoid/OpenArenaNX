@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 // tr_mesh.c: triangle model functions
@@ -192,6 +200,14 @@ int R_ComputeLOD( trRefEntity_t *ent ) {
 			
 			radius = RadiusFromBounds(mdrframe->bounds[0], mdrframe->bounds[1]);
 		}
+		else if(tr.currentModel->type == MOD_MDC)
+		{
+			frame = ( md3Frame_t * )( ( ( unsigned char * ) tr.currentModel->mdc[0] ) + tr.currentModel->mdc[0]->ofsFrames );
+
+			frame += ent->e.frame;
+
+			radius = RadiusFromBounds( frame->bounds[0], frame->bounds[1] );
+		}
 		else
 		{
 			frame = ( md3Frame_t * ) ( ( ( unsigned char * ) tr.currentModel->md3[0] ) + tr.currentModel->md3[0]->ofsFrames );
@@ -242,9 +258,7 @@ R_ComputeFogNum
 
 =================
 */
-int R_ComputeFogNum( md3Header_t *header, trRefEntity_t *ent ) {
-	int				i, j;
-	fog_t			*fog;
+static int R_ComputeFogNum( md3Header_t *header, trRefEntity_t *ent ) {
 	md3Frame_t		*md3Frame;
 	vec3_t			localOrigin;
 
@@ -255,22 +269,8 @@ int R_ComputeFogNum( md3Header_t *header, trRefEntity_t *ent ) {
 	// FIXME: non-normalized axis issues
 	md3Frame = ( md3Frame_t * ) ( ( byte * ) header + header->ofsFrames ) + ent->e.frame;
 	VectorAdd( ent->e.origin, md3Frame->localOrigin, localOrigin );
-	for ( i = 1 ; i < tr.world->numfogs ; i++ ) {
-		fog = &tr.world->fogs[i];
-		for ( j = 0 ; j < 3 ; j++ ) {
-			if ( localOrigin[j] - md3Frame->radius >= fog->bounds[1][j] ) {
-				break;
-			}
-			if ( localOrigin[j] + md3Frame->radius <= fog->bounds[0][j] ) {
-				break;
-			}
-		}
-		if ( j == 3 ) {
-			return i;
-		}
-	}
 
-	return 0;
+	return R_PointFogNum( &tr.refdef, localOrigin, md3Frame->radius );
 }
 
 /*
@@ -290,8 +290,8 @@ void R_AddMD3Surfaces( trRefEntity_t *ent ) {
 	int				fogNum;
 	qboolean		personalModel;
 
-	// don't add third_person objects if not in a portal
-	personalModel = (ent->e.renderfx & RF_THIRD_PERSON) && !tr.viewParms.isPortal;
+	// don't add mirror only objects if not in a mirror/portal
+	personalModel = (ent->e.renderfx & RF_ONLY_MIRROR) && !tr.viewParms.isPortal;
 
 	if ( ent->e.renderfx & RF_WRAP_FRAMES ) {
 		ent->e.frame %= tr.currentModel->md3[0]->numFrames;
@@ -348,29 +348,11 @@ void R_AddMD3Surfaces( trRefEntity_t *ent ) {
 	//
 	surface = (md3Surface_t *)( (byte *)header + header->ofsSurfaces );
 	for ( i = 0 ; i < header->numSurfaces ; i++ ) {
-
-		if ( ent->e.customShader ) {
-			shader = R_GetShaderByHandle( ent->e.customShader );
-		} else if ( ent->e.customSkin > 0 && ent->e.customSkin < tr.numSkins ) {
-			skin_t *skin;
-			int		j;
-
-			skin = R_GetSkinByHandle( ent->e.customSkin );
-
-			// match the surface name to something in the skin file
-			shader = tr.defaultShader;
-			for ( j = 0 ; j < skin->numSurfaces ; j++ ) {
-				// the names have both been lowercased
-				if ( !strcmp( skin->surfaces[j].name, surface->name ) ) {
-					shader = skin->surfaces[j].shader;
-					break;
-				}
-			}
-			if (shader == tr.defaultShader) {
-				ri.Printf( PRINT_DEVELOPER, "WARNING: no shader for surface %s in skin %s\n", surface->name, skin->name);
-			}
-			else if (shader->defaultShader) {
-				ri.Printf( PRINT_DEVELOPER, "WARNING: shader %s in skin %s not found\n", shader->name, skin->name);
+		if ( ent->e.customShader || ent->e.customSkin ) {
+			shader = R_CustomSurfaceShader( surface->name, ent->e.customShader, ent->e.customSkin );
+			if ( shader == tr.nodrawShader ) {
+				surface = (md3Surface_t *)( (byte *)surface + surface->ofsEnd );
+				continue;
 			}
 		} else if ( surface->numShaders <= 0 ) {
 			shader = tr.defaultShader;
@@ -402,7 +384,7 @@ void R_AddMD3Surfaces( trRefEntity_t *ent ) {
 
 		// don't add third_person objects if not viewing through a portal
 		if ( !personalModel ) {
-			R_AddDrawSurf( (void *)surface, shader, fogNum, qfalse );
+			R_AddEntDrawSurf( ent, (void *)surface, shader, fogNum, qfalse, 0 );
 		}
 
 		surface = (md3Surface_t *)( (byte *)surface + surface->ofsEnd );

@@ -29,7 +29,7 @@ DESTDIR=build/release-darwin-${BUILDARCH}
 
 cd `dirname $0`
 if [ ! -f Makefile ]; then
-	echo "This script must be run from the ioquake3 build directory"
+	echo "This script must be run from the Spearmint build directory"
 	exit 1
 fi
 

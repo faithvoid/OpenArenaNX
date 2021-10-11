@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 // tr_image.c
@@ -93,14 +101,6 @@ void GL_TextureMode( const char *string ) {
 			break;
 		}
 	}
-
-	// hack to prevent trilinear from being set on voodoo,
-	// because their driver freaks...
-	if ( i == 5 && glConfig.hardwareType == GLHW_3DFX_2D3D ) {
-		ri.Printf( PRINT_ALL, "Refusing to set trilinear on a voodoo.\n" );
-		i = 3;
-	}
-
 
 	if ( i == 6 ) {
 		ri.Printf (PRINT_ALL, "bad filter name\n");
@@ -544,16 +544,59 @@ byte	mipBlendColors[16][4] = {
 };
 
 
+static qboolean UploadOneTexLevel( int level, const textureLevel_t *pic )
+{
+	GLsizei w;
+	if ( pic->format != GL_RGBA8 ) {
+		if ( !qglCompressedTexImage2DARB ) {
+			return qfalse;
+		}
+
+		qglCompressedTexImage2DARB( GL_PROXY_TEXTURE_2D, level,
+						pic->format,
+						pic->width, pic->height, 0,
+						pic->size, NULL);
+
+		qglGetTexLevelParameteriv( GL_PROXY_TEXTURE_2D, level, GL_TEXTURE_WIDTH, &w);
+		if ( !w ) {
+			return qfalse;
+		}
+
+		qglCompressedTexImage2DARB( GL_TEXTURE_2D, level,
+						pic->format,
+						pic->width, pic->height, 0,
+						pic->size, pic->data);
+	} else {
+		qglTexImage2D( GL_PROXY_TEXTURE_2D, level,
+						pic->format,
+						pic->width, pic->height, 0,
+						GL_RGBA, GL_UNSIGNED_BYTE,
+						NULL );
+
+		qglGetTexLevelParameteriv( GL_PROXY_TEXTURE_2D, level, GL_TEXTURE_WIDTH, &w);
+		if ( !w ) {
+			return qfalse;
+		}
+
+		qglTexImage2D( GL_TEXTURE_2D, level,
+						pic->format,
+						pic->width, pic->height, 0,
+						GL_RGBA, GL_UNSIGNED_BYTE,
+						pic->data );
+	}
+
+	return qtrue;
+}
+
 /*
 ===============
 Upload32
 
 ===============
 */
-static void Upload32( unsigned *data, 
-						  int width, int height, 
+static void Upload32( int numTexLevels, const textureLevel_t *pics,
 						  qboolean mipmap, 
-						  qboolean picmip, 
+						  int picmip, 
 							qboolean lightMap,
 						  qboolean allowCompression,
 						  int *format, 
@@ -567,6 +610,36 @@ static void Upload32( unsigned *data,
 	byte		*scan;
 	GLenum		internalFormat = GL_RGB;
 	float		rMax = 0, gMax = 0, bMax = 0;
+	int			baseLevel;
+	int			width, height;
+	unsigned	*data;
+
+	// we may skip some textureLevels, if r_picmip is set
+	if ( picmip ) {
+		baseLevel = Com_Clamp( 0, numTexLevels - 1, picmip );
+	} else {
+		baseLevel = 0;
+	}
+
+	width = pics[baseLevel].width;
+	height = pics[baseLevel].height;
+
+	if( pics[0].format != GL_RGBA8 && pics[0].format != GL_RGBA16F_ARB ) {
+		// compressed texture
+		for( i = baseLevel; i < numTexLevels; i++ ) {
+			if( !UploadOneTexLevel( i - baseLevel, &pics[i] ) )
+				break;
+		}
+		if( i >= numTexLevels )
+			goto done;
+
+		// failed to upload all levels
+		ri.Error(ERR_DROP, "Unsupported Texture format: %8x", pics[0].format );
+		// ZTM: TODO: Pass image to Upload32 in OpenGL1 too
+		//ri.Error(ERR_DROP, "Unsupported Texture format: %x for %s", pics[0].format, image->imgName );
+	} else {
+		data = pics[baseLevel].data;
+	}
 
 	//
 	// convert to exact power of 2 sizes
@@ -591,9 +664,9 @@ static void Upload32( unsigned *data,
 	//
 	// perform optional picmip operation
 	//
-	if ( picmip ) {
-		scaled_width >>= r_picmip->integer;
-		scaled_height >>= r_picmip->integer;
+	if ( picmip - baseLevel > 0 ) {
+		scaled_width >>= picmip - baseLevel;
+		scaled_height >>= picmip - baseLevel;
 	}
 
 	//
@@ -722,7 +795,11 @@ static void Upload32( unsigned *data,
 			}
 			else
 			{
-				if ( r_texturebits->integer == 16 )
+				if ( allowCompression && glConfig.textureCompression == TC_S3TC_ARB )
+				{
+					internalFormat = GL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
+				}
+				else if ( r_texturebits->integer == 16 )
 				{
 					internalFormat = GL_RGBA4;
 				}
@@ -804,16 +881,16 @@ done:
 
 	if (mipmap)
 	{
-		if ( textureFilterAnisotropic )
+		if ( glConfig.textureFilterAnisotropic )
 			qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT,
-					(GLint)Com_Clamp( 1, maxAnisotropy, r_ext_max_anisotropy->integer ) );
+					(GLint)Com_Clamp( 1, glConfig.maxAnisotropy, r_ext_max_anisotropy->integer ) );
 
 		qglTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gl_filter_min);
 		qglTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, gl_filter_max);
 	}
 	else
 	{
-		if ( textureFilterAnisotropic )
+		if ( glConfig.textureFilterAnisotropic )
 			qglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, 1 );
 
 		qglTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
@@ -838,8 +915,29 @@ This is the only way any image_t are created
 */
 image_t *R_CreateImage( const char *name, byte *pic, int width, int height,
 		imgType_t type, imgFlags_t flags, int internalFormat ) {
+	textureLevel_t texLevel;
+
+	texLevel.format = GL_RGBA8;
+	texLevel.width = width;
+	texLevel.height = height;
+	texLevel.size = width * height * 4;
+	texLevel.data = pic;
+
+	return R_CreateImage2( name, 1, &texLevel, type, flags, internalFormat );
+}
+
+/*
+================
+R_CreateImage2
+
+This is the only way any image_t are created
+================
+*/
+image_t *R_CreateImage2( const char *name, int numTexLevels, const textureLevel_t *pic,
+		imgType_t type, imgFlags_t flags, int internalFormat ) {
 	image_t		*image;
 	qboolean	isLightmap = qfalse;
+	int			picmip;
 	long		hash;
 	int         glWrapClampMode;
 
@@ -863,10 +961,10 @@ image_t *R_CreateImage( const char *name, byte *pic, int width, int height,
 
 	strcpy (image->imgName, name);
 
-	image->width = width;
-	image->height = height;
+	image->width = pic[0].width;
+	image->height = pic[0].height;
 	if (flags & IMGFLAG_CLAMPTOEDGE)
-		glWrapClampMode = haveClampToEdge ? GL_CLAMP_TO_EDGE : GL_CLAMP;
+		glWrapClampMode = GL_CLAMP_TO_EDGE;
 	else
 		glWrapClampMode = GL_REPEAT;
 
@@ -883,9 +981,16 @@ image_t *R_CreateImage( const char *name, byte *pic, int width, int height,
 
 	GL_Bind(image);
 
-	Upload32( (unsigned *)pic, image->width, image->height, 
+	if ( image->flags & IMGFLAG_PICMIP2 )
+		picmip = r_picmip2->integer;
+	else if ( image->flags & IMGFLAG_PICMIP )
+		picmip = r_picmip->integer;
+	else
+		picmip = 0;
+
+	Upload32( numTexLevels, pic,
 								image->flags & IMGFLAG_MIPMAP,
-								image->flags & IMGFLAG_PICMIP,
+								picmip,
 								isLightmap,
 								!(image->flags & IMGFLAG_NO_COMPRESSION),
 								&image->internalFormat,
@@ -914,7 +1019,7 @@ image_t *R_CreateImage( const char *name, byte *pic, int width, int height,
 typedef struct
 {
 	char *ext;
-	void (*ImageLoader)( const char *, unsigned char **, int *, int * );
+	void (*ImageLoader)( const char *, int *, textureLevel_t ** );
 } imageExtToLoaderMap_t;
 
 // Note that the ordering indicates the order of preference used
@@ -925,6 +1030,8 @@ static imageExtToLoaderMap_t imageLoaders[ ] =
 	{ "jpg",  R_LoadJPG },
 	{ "jpeg", R_LoadJPG },
 	{ "png",  R_LoadPNG },
+	{ "ftx",  R_LoadFTX },
+	{ "dds",  R_LoadDDS },
 	{ "pcx",  R_LoadPCX },
 	{ "bmp",  R_LoadBMP }
 };
@@ -939,7 +1046,7 @@ Loads any of the supported image types into a canonical
 32 bit format.
 =================
 */
-void R_LoadImage( const char *name, byte **pic, int *width, int *height )
+void R_LoadImage( const char *name, int *numLevels, textureLevel_t **pic )
 {
 	qboolean orgNameFailed = qfalse;
 	int orgLoader = -1;
@@ -949,8 +1056,7 @@ void R_LoadImage( const char *name, byte **pic, int *width, int *height )
 	char *altName;
 
 	*pic = NULL;
-	*width = 0;
-	*height = 0;
+	*numLevels = 0;
 
 	Q_strncpyz( localName, name, MAX_QPATH );
 
@@ -964,7 +1070,7 @@ void R_LoadImage( const char *name, byte **pic, int *width, int *height )
 			if( !Q_stricmp( ext, imageLoaders[ i ].ext ) )
 			{
 				// Load
-				imageLoaders[ i ].ImageLoader( localName, pic, width, height );
+				imageLoaders[ i ].ImageLoader( localName, numLevels, pic );
 				break;
 			}
 		}
@@ -998,7 +1104,7 @@ void R_LoadImage( const char *name, byte **pic, int *width, int *height )
 		altName = va( "%s.%s", localName, imageLoaders[ i ].ext );
 
 		// Load
-		imageLoaders[ i ].ImageLoader( altName, pic, width, height );
+		imageLoaders[ i ].ImageLoader( altName, numLevels, pic );
 
 		if( *pic )
 		{
@@ -1025,8 +1131,8 @@ Returns NULL if it fails, not a default image.
 image_t	*R_FindImageFile( const char *name, imgType_t type, imgFlags_t flags )
 {
 	image_t	*image;
-	int		width, height;
-	byte	*pic;
+	int	numLevels;
+	textureLevel_t	*pic;
 	long	hash;
 
 	if (!name) {
@@ -1053,12 +1159,17 @@ image_t	*R_FindImageFile( const char *name, imgType_t type, imgFlags_t flags )
 	//
 	// load the pic from disk
 	//
-	R_LoadImage( name, &pic, &width, &height );
+	R_LoadImage( name, &numLevels, &pic );
 	if ( pic == NULL ) {
 		return NULL;
 	}
 
-	image = R_CreateImage( ( char * ) name, pic, width, height, type, flags, 0 );
+	// apply lightmap coloring
+	if ( ( flags & IMGFLAG_LIGHTMAP ) && pic[0].format == GL_RGBA8 ) {
+		R_ProcessLightmap( (byte**)&pic[0].data, 4, pic[0].width, pic[0].height, (byte**)&pic[0].data );
+	}
+
+	image = R_CreateImage2( ( char * ) name, numLevels, pic, type, flags, 0 );
 	ri.Free( pic );
 	return image;
 }
@@ -1069,32 +1180,64 @@ image_t	*R_FindImageFile( const char *name, imgType_t type, imgFlags_t flags )
 R_CreateDlightImage
 ================
 */
-#define	DLIGHT_SIZE	16
+#define	DLIGHT_SIZE	128
 static void R_CreateDlightImage( void ) {
 	int		x,y;
-	byte	data[DLIGHT_SIZE][DLIGHT_SIZE][4];
+	byte	data[DLIGHT_SIZE*DLIGHT_SIZE][4];
 	int		b;
+	int		dlightSize;
+
+	dlightSize = r_dlightImageSize->integer;
+
+	// check if not a power of two
+	if ( ( dlightSize & ( dlightSize - 1 ) ) != 0 ) {
+		if (dlightSize < 16)
+			dlightSize = 16;
+		else if (dlightSize < 32)
+			dlightSize = 32;
+		else if (dlightSize < 64)
+			dlightSize = 64;
+		else
+			dlightSize = 128;
+
+		ri.Printf( PRINT_WARNING, "WARNING: r_dlightImageSize (%d) is not a power of two, using next power of two (%d).\n", r_dlightImageSize->integer, dlightSize );
+	}
 
 	// make a centered inverse-square falloff blob for dynamic lighting
-	for (x=0 ; x<DLIGHT_SIZE ; x++) {
-		for (y=0 ; y<DLIGHT_SIZE ; y++) {
+	for (x = 0; x < dlightSize; x++) {
+		for (y = 0; y < dlightSize; y++) {
 			float	d;
 
-			d = ( DLIGHT_SIZE/2 - 0.5f - x ) * ( DLIGHT_SIZE/2 - 0.5f - x ) +
-				( DLIGHT_SIZE/2 - 0.5f - y ) * ( DLIGHT_SIZE/2 - 0.5f - y );
-			b = 4000 / d;
-			if (b > 255) {
-				b = 255;
-			} else if ( b < 75 ) {
-				b = 0;
+			d = ( dlightSize/2 - 0.5f - x ) * ( dlightSize/2 - 0.5f - x ) +
+				( dlightSize/2 - 0.5f - y ) * ( dlightSize/2 - 0.5f - y );
+			b = dlightSize * dlightSize * 15.625f / d;
+
+			if (dlightSize >= 64) {
+				// ZTM: Fade outside edge to look similar to the original 16x16 strected image.
+				// Fade to black using 16 steps, unrelated to original size.
+				// 75 - (FADE_STEPS / 2) = 67. 67 + FADE_STEPS = 83.
+				if (b > 255) {
+					b = 255;
+				} else if (b < 83 && b > 67) {
+					b = ( b - 67 ) / 16.0f * 83;
+				} else if (b <= 67) {
+					b = 0;
+				}
+			} else {
+				if (b > 255) {
+					b = 255;
+				} else if (b < 75) {
+					b = 0;
+				}
 			}
-			data[y][x][0] = 
-			data[y][x][1] = 
-			data[y][x][2] = b;
-			data[y][x][3] = 255;			
+
+			data[y*dlightSize + x][0] =
+			data[y*dlightSize + x][1] =
+			data[y*dlightSize + x][2] = b;
+			data[y*dlightSize + x][3] = 255;
 		}
 	}
-	tr.dlightImage = R_CreateImage("*dlight", (byte *)data, DLIGHT_SIZE, DLIGHT_SIZE, IMGTYPE_COLORALPHA, IMGFLAG_CLAMPTOEDGE, 0 );
+	tr.dlightImage = R_CreateImage("*dlight", (byte *)data, dlightSize, dlightSize, IMGTYPE_COLORALPHA, IMGFLAG_CLAMPTOEDGE, 0 );
 }
 
 
@@ -1106,12 +1249,9 @@ R_InitFogTable
 void R_InitFogTable( void ) {
 	int		i;
 	float	d;
-	float	exp;
-	
-	exp = 0.5;
 
 	for ( i = 0 ; i < FOG_TABLE_SIZE ; i++ ) {
-		d = pow ( (float)i/(FOG_TABLE_SIZE-1), exp );
+		d = pow ( (float)i/(FOG_TABLE_SIZE-1), DEFAULT_FOG_EXP_DENSITY );
 
 		tr.fogTable[i] = d;
 	}
@@ -1154,30 +1294,88 @@ float	R_FogFactor( float s, float t ) {
 
 /*
 ================
-R_CreateFogImage
+R_FogTcScale
 ================
 */
-#define	FOG_S	256
-#define	FOG_T	32
-static void R_CreateFogImage( void ) {
-	int		x,y;
+float R_FogTcScale( fogType_t fogType, float depthForOpaque, float density ) {
+	float scale;
+
+	if ( fogType == FT_LINEAR ) {
+		scale = DEFAULT_FOG_LINEAR_DENSITY / density;
+		return ( 1.0f / ( depthForOpaque * scale ) );
+	}
+
+	// exponential fog
+	scale = DEFAULT_FOG_EXP_DENSITY / density;
+	return ( 1.0f / ( depthForOpaque * 8 * scale ) );
+}
+
+/*
+================
+R_CreateFogImages
+
+Create fog images for exponential and linear fog.
+================
+*/
+static void R_CreateFogImages( void ) {
+	int		x, y, alpha;
 	byte	*data;
 	float	d;
+	int		fog_s, fog_t;
 
-	data = ri.Hunk_AllocateTempMemory( FOG_S * FOG_T * 4 );
+	// Create exponential fog image
+	fog_s = 256;
+	fog_t = 32;
+	data = ri.Hunk_AllocateTempMemory( fog_s * fog_t * 4 );
 
 	// S is distance, T is depth
-	for (x=0 ; x<FOG_S ; x++) {
-		for (y=0 ; y<FOG_T ; y++) {
-			d = R_FogFactor( ( x + 0.5f ) / FOG_S, ( y + 0.5f ) / FOG_T );
+	for (x=0 ; x<fog_s ; x++) {
+		for (y=0 ; y<fog_t ; y++) {
+			d = R_FogFactor( ( x + 0.5f ) / fog_s, ( y + 0.5f ) / fog_t );
 
-			data[(y*FOG_S+x)*4+0] = 
-			data[(y*FOG_S+x)*4+1] = 
-			data[(y*FOG_S+x)*4+2] = 255;
-			data[(y*FOG_S+x)*4+3] = 255*d;
+			data[(y*fog_s+x)*4+0] = 
+			data[(y*fog_s+x)*4+1] = 
+			data[(y*fog_s+x)*4+2] = 255;
+			data[(y*fog_s+x)*4+3] = 255*d;
 		}
 	}
-	tr.fogImage = R_CreateImage("*fog", (byte *)data, FOG_S, FOG_T, IMGTYPE_COLORALPHA, IMGFLAG_CLAMPTOEDGE, 0 );
+
+	tr.fogImage = R_CreateImage("*fog", (byte *)data, fog_s, fog_t, IMGTYPE_COLORALPHA, IMGFLAG_CLAMPTOEDGE, 0 );
+	ri.Hunk_FreeTempMemory( data );
+
+
+	// Create linear fog image
+	fog_s = 16;
+	fog_t = 16;
+	data = ri.Hunk_AllocateTempMemory( fog_s * fog_t * 4 );
+
+	// ydnar: new, linear fog texture generating algo for GL_CLAMP_TO_EDGE (OpenGL 1.2+)
+
+	// S is distance, T is depth
+	for ( x = 0 ; x < fog_s ; x++ ) {
+		for ( y = 0 ; y < fog_t ; y++ ) {
+			alpha = 270 * ( (float) x / fog_s ) * ( (float) y / fog_t );    // need slop room for fp round to 0
+			if ( alpha < 0 ) {
+				alpha = 0;
+			} else if ( alpha > 255 ) {
+				alpha = 255;
+			}
+
+			// ensure edge/corner cases are fully transparent (at 0,0) or fully opaque (at 1,N where N is 0-1.0)
+			if ( x == 0 ) {
+				alpha = 0;
+			} else if ( x == ( fog_s - 1 ) ) {
+				alpha = 255;
+			}
+
+			data[( y * fog_s + x ) * 4 + 0] =
+			data[( y * fog_s + x ) * 4 + 1] =
+			data[( y * fog_s + x ) * 4 + 2] = 255;
+			data[( y * fog_s + x ) * 4 + 3] = alpha;
+		}
+	}
+
+	tr.linearFogImage = R_CreateImage("*linearfog", (byte *)data, fog_s, fog_t, IMGTYPE_COLORALPHA, IMGFLAG_CLAMPTOEDGE, 0 );
 	ri.Hunk_FreeTempMemory( data );
 }
 
@@ -1252,7 +1450,7 @@ void R_CreateBuiltinImages( void ) {
 	}
 
 	R_CreateDlightImage();
-	R_CreateFogImage();
+	R_CreateFogImages();
 }
 
 
@@ -1390,231 +1588,70 @@ SKINS
 */
 
 /*
-==================
-CommaParse
-
-This is unfortunate, but the skin files aren't
-compatible with our normal parsing rules.
-==================
-*/
-static char *CommaParse( char **data_p ) {
-	int c = 0, len;
-	char *data;
-	static	char	com_token[MAX_TOKEN_CHARS];
-
-	data = *data_p;
-	len = 0;
-	com_token[0] = 0;
-
-	// make sure incoming data is valid
-	if ( !data ) {
-		*data_p = NULL;
-		return com_token;
-	}
-
-	while ( 1 ) {
-		// skip whitespace
-		while( (c = *data) <= ' ') {
-			if( !c ) {
-				break;
-			}
-			data++;
-		}
-
-
-		c = *data;
-
-		// skip double slash comments
-		if ( c == '/' && data[1] == '/' )
-		{
-			data += 2;
-			while (*data && *data != '\n') {
-				data++;
-			}
-		}
-		// skip /* */ comments
-		else if ( c=='/' && data[1] == '*' ) 
-		{
-			data += 2;
-			while ( *data && ( *data != '*' || data[1] != '/' ) ) 
-			{
-				data++;
-			}
-			if ( *data ) 
-			{
-				data += 2;
-			}
-		}
-		else
-		{
-			break;
-		}
-	}
-
-	if ( c == 0 ) {
-		return "";
-	}
-
-	// handle quoted strings
-	if (c == '\"')
-	{
-		data++;
-		while (1)
-		{
-			c = *data++;
-			if (c=='\"' || !c)
-			{
-				com_token[len] = 0;
-				*data_p = ( char * ) data;
-				return com_token;
-			}
-			if (len < MAX_TOKEN_CHARS - 1)
-			{
-				com_token[len] = c;
-				len++;
-			}
-		}
-	}
-
-	// parse a regular word
-	do
-	{
-		if (len < MAX_TOKEN_CHARS - 1)
-		{
-			com_token[len] = c;
-			len++;
-		}
-		data++;
-		c = *data;
-	} while (c>32 && c != ',' );
-
-	com_token[len] = 0;
-
-	*data_p = ( char * ) data;
-	return com_token;
-}
-
-
-/*
 ===============
-RE_RegisterSkin
-
+RE_AllocSkinSurface
 ===============
 */
-qhandle_t RE_RegisterSkin( const char *name ) {
-	skinSurface_t parseSurfaces[MAX_SKIN_SURFACES];
-	qhandle_t	hSkin;
-	skin_t		*skin;
+qhandle_t	RE_AllocSkinSurface( const char *name, qhandle_t hShader ) {
+	qhandle_t		hSurf;
 	skinSurface_t	*surf;
-	union {
-		char *c;
-		void *v;
-	} text;
-	char		*text_p;
-	char		*token;
-	char		surfName[MAX_QPATH];
-	int			totalSurfaces;
+	shader_t		*shader;
+	char			*reuseName;
+	int				nameLen;
+	char			localName[MAX_QPATH];
 
 	if ( !name || !name[0] ) {
-		ri.Printf( PRINT_DEVELOPER, "Empty name passed to RE_RegisterSkin\n" );
+		ri.Printf( PRINT_DEVELOPER, "Empty name passed to RE_AllocSkinSurface\n" );
 		return 0;
 	}
 
 	if ( strlen( name ) >= MAX_QPATH ) {
-		ri.Printf( PRINT_DEVELOPER, "Skin name exceeds MAX_QPATH\n" );
+		ri.Printf( PRINT_DEVELOPER, "Skin surface name exceeds MAX_QPATH\n" );
 		return 0;
 	}
 
+	Q_strncpyz( localName, name, sizeof(localName) );
 
-	// see if the skin is already loaded
-	for ( hSkin = 1; hSkin < tr.numSkins ; hSkin++ ) {
-		skin = tr.skins[hSkin];
-		if ( !Q_stricmp( skin->name, name ) ) {
-			if( skin->numSurfaces == 0 ) {
-				return 0;		// default skin
+	// lowercase the surface name so skin compares are faster
+	Q_strlwr( localName );
+
+	reuseName = NULL;
+	shader = R_GetShaderByHandle( hShader );
+
+	// see if the surface is already loaded
+	for ( hSurf = 1; hSurf < tr.numSkinSurfaces ; hSurf++ ) {
+		surf = &tr.skinSurfaces[hSurf];
+		if ( !strcmp( surf->name, localName ) ) {
+			if ( surf->shader == shader ) {
+				return hSurf;
 			}
-			return hSkin;
+			reuseName = surf->name;
 		}
 	}
 
-	// allocate a new skin
-	if ( tr.numSkins == MAX_SKINS ) {
-		ri.Printf( PRINT_WARNING, "WARNING: RE_RegisterSkin( '%s' ) MAX_SKINS hit\n", name );
-		return 0;
-	}
-	tr.numSkins++;
-	skin = ri.Hunk_Alloc( sizeof( skin_t ), h_low );
-	tr.skins[hSkin] = skin;
-	Q_strncpyz( skin->name, name, sizeof( skin->name ) );
-	skin->numSurfaces = 0;
-
-	R_IssuePendingRenderCommands();
-
-	// If not a .skin file, load as a single shader
-	if ( strcmp( name + strlen( name ) - 5, ".skin" ) ) {
-		skin->numSurfaces = 1;
-		skin->surfaces = ri.Hunk_Alloc( sizeof( skinSurface_t ), h_low );
-		skin->surfaces[0].shader = R_FindShader( name, LIGHTMAP_NONE, qtrue );
-		return hSkin;
-	}
-
-	// load and parse the skin file
-    ri.FS_ReadFile( name, &text.v );
-	if ( !text.c ) {
+	if ( tr.numSkinSurfaces >= MAX_SKINSURFACES ) {
+		ri.Printf( PRINT_WARNING, "WARNING: RE_AllocSkinSurface( '%s' ) MAX_SKINSURFACES hit\n", name );
 		return 0;
 	}
 
-	totalSurfaces = 0;
-	text_p = text.c;
-	while ( text_p && *text_p ) {
-		// get surface name
-		token = CommaParse( &text_p );
-		Q_strncpyz( surfName, token, sizeof( surfName ) );
+	// add a new skin surface
+	tr.numSkinSurfaces++;
 
-		if ( !token[0] ) {
-			break;
-		}
-		// lowercase the surface name so skin compares are faster
-		Q_strlwr( surfName );
+	surf = &tr.skinSurfaces[hSurf];
+	surf->shader = shader;
 
-		if ( *text_p == ',' ) {
-			text_p++;
-		}
+	if ( reuseName ) {
+		surf->name = reuseName;
+	} else {
+		nameLen = strlen( localName ) + 1;
 
-		if ( strstr( token, "tag_" ) ) {
-			continue;
-		}
-		
-		// parse the shader name
-		token = CommaParse( &text_p );
+		surf->name = ri.Hunk_Alloc( nameLen, h_low );
+		tr.skinSurfaceNameMemory += nameLen;
 
-		if ( skin->numSurfaces < MAX_SKIN_SURFACES ) {
-			surf = &parseSurfaces[skin->numSurfaces];
-			Q_strncpyz( surf->name, surfName, sizeof( surf->name ) );
-			surf->shader = R_FindShader( token, LIGHTMAP_NONE, qtrue );
-			skin->numSurfaces++;
-		}
-
-		totalSurfaces++;
+		Q_strncpyz( surf->name, localName, nameLen );
 	}
 
-	ri.FS_FreeFile( text.v );
-
-	if ( totalSurfaces > MAX_SKIN_SURFACES ) {
-		ri.Printf( PRINT_WARNING, "WARNING: Ignoring excess surfaces (found %d, max is %d) in skin '%s'!\n",
-					totalSurfaces, MAX_SKIN_SURFACES, name );
-	}
-
-	// never let a skin have 0 shaders
-	if ( skin->numSurfaces == 0 ) {
-		return 0;		// use default skin
-	}
-
-	// copy surfaces to skin
-	skin->surfaces = ri.Hunk_Alloc( skin->numSurfaces * sizeof( skinSurface_t ), h_low );
-	memcpy( skin->surfaces, parseSurfaces, skin->numSurfaces * sizeof( skinSurface_t ) );
-
-	return hSkin;
+	return hSurf;
 }
 
 
@@ -1624,28 +1661,7 @@ R_InitSkins
 ===============
 */
 void	R_InitSkins( void ) {
-	skin_t		*skin;
-
-	tr.numSkins = 1;
-
-	// make the default skin have all default shaders
-	skin = tr.skins[0] = ri.Hunk_Alloc( sizeof( skin_t ), h_low );
-	Q_strncpyz( skin->name, "<default skin>", sizeof( skin->name )  );
-	skin->numSurfaces = 1;
-	skin->surfaces = ri.Hunk_Alloc( sizeof( skinSurface_t ), h_low );
-	skin->surfaces[0].shader = tr.defaultShader;
-}
-
-/*
-===============
-R_GetSkinByHandle
-===============
-*/
-skin_t	*R_GetSkinByHandle( qhandle_t hSkin ) {
-	if ( hSkin < 1 || hSkin >= tr.numSkins ) {
-		return tr.skins[0];
-	}
-	return tr.skins[ hSkin ];
+	tr.numSkinSurfaces = 1;
 }
 
 /*
@@ -1654,19 +1670,17 @@ R_SkinList_f
 ===============
 */
 void	R_SkinList_f( void ) {
-	int			i, j;
-	skin_t		*skin;
+	int			i;
+	skinSurface_t *surf;
 
+	ri.Printf (PRINT_ALL, "Skin surface name memory: %d bytes\n", tr.skinSurfaceNameMemory);
 	ri.Printf (PRINT_ALL, "------------------\n");
 
-	for ( i = 0 ; i < tr.numSkins ; i++ ) {
-		skin = tr.skins[i];
+	for ( i = 1 ; i < tr.numSkinSurfaces ; i++ ) {
+		surf = &tr.skinSurfaces[i];
 
-		ri.Printf( PRINT_ALL, "%3i:%s (%d surfaces)\n", i, skin->name, skin->numSurfaces );
-		for ( j = 0 ; j < skin->numSurfaces ; j++ ) {
-			ri.Printf( PRINT_ALL, "       %s = %s\n", 
-				skin->surfaces[j].name, skin->surfaces[j].shader->name );
-		}
+		ri.Printf( PRINT_ALL, "%3i: %s = %s\n",
+				i, surf->name, surf->shader->name );
 	}
 	ri.Printf (PRINT_ALL, "------------------\n");
 }

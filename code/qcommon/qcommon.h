@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 // qcommon.h -- definitions common between client and server, but not game.or ref modules
@@ -24,6 +32,70 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define _QCOMMON_H_
 
 #include "../qcommon/cm_public.h"
+#include "../renderercommon/tr_public.h"
+
+// Engine name
+#define PRODUCT_NAME				"Spearmint"
+
+// Keep this in-sync with VERSION in Makefile.
+#ifndef PRODUCT_VERSION
+	#define PRODUCT_VERSION			"1.0.3"
+#endif
+
+#define Q3_VERSION PRODUCT_NAME " " PRODUCT_VERSION
+
+// Settings directory name
+// GNU/Linux: $HOME/.local/share/homepath-name (lower case and spaces replaced with hyphens)
+// MacOS: $HOME/Library/Application Support/Homepath Name
+// Windows: %APPDATA%\Homepath Name
+#define HOMEPATH_NAME				"Spearmint"
+
+// Steam installation information
+//#define STEAMPATH_NAME			"Quake 3 Arena"
+//#define STEAMPATH_APPID			"2200"
+
+// Separates games in server browser. Must NOT contain whitespace (dpmaster will reject the game servers).
+// Change this if not compatible with Spearmint games aka cannot play them (such as if you break VM compatibility).
+#define GAMENAME_FOR_MASTER			"Spearmint"
+
+// Game's engine settings for compatibility and other information needed before loading CGame VM.
+// Probably don't need to change this, but if you break compatiblity feel free to give it a less stupid name.
+#define GAMESETTINGS				"mint-game.settings"
+
+// Prefix for game and cgame virtual machines. Example: vm/PREFIXcgame.qvm, PREFIXcgame_x86.dll
+// Change this if you break VM API compatibility with Spearmint.
+// You'll also need to change VM_PREFIX in game code Makefile.
+#define VM_PREFIX					"mint-"
+
+// Prefix for renderer native libraries. Example: PREFIXopengl1_x86.dll
+// Change this if you break renderer compatibility with Spearmint.
+// You'll also need to change RENDERER_PREFIX in Makefile.
+#ifndef RENDERER_PREFIX
+	#define RENDERER_PREFIX			"spearmint-renderer-"
+#endif
+
+// Default game to load (default fs_game value).
+// You can change this and it won't break network compatiblity.
+#ifndef BASEGAME
+	#define BASEGAME				"baseq3"
+#endif
+
+// File containing a list of games to check if are installed to use as default base game.
+// This overrides BASEGAME if a game is found. If none are found, uses BASEGAME.
+#define MINT_GAMELIST					"spearmint-gamelist.txt"
+
+// In the future if the client-server protocol is modified, this may allow old and new engines to play together
+//#define LEGACY_PROTOCOL
+
+// Heartbeat for dpmaster protocol. You shouldn't change this unless you know what you're doing
+#define HEARTBEAT_FOR_MASTER		"DarkPlaces"
+#define FLATLINE_FOR_MASTER			HEARTBEAT_FOR_MASTER
+
+#define MAX_MASTER_SERVERS      5	// number of supported master servers
+
+#define DEMOEXT	"mintdemo"			// standard demo extension
+
+//============================================================================
 
 //Ignore __attribute__ on non-gcc platforms
 #ifndef __GNUC__
@@ -31,8 +103,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define __attribute__(x)
 #endif
 #endif
-
-//#define	PRE_RELEASE_DEMO
 
 //============================================================================
 
@@ -98,13 +168,17 @@ int		MSG_LookaheadByte (msg_t *msg);
 void MSG_WriteDeltaUsercmdKey( msg_t *msg, int key, usercmd_t *from, usercmd_t *to );
 void MSG_ReadDeltaUsercmdKey( msg_t *msg, int key, usercmd_t *from, usercmd_t *to );
 
-void MSG_WriteDeltaEntity( msg_t *msg, struct entityState_s *from, struct entityState_s *to
-						   , qboolean force );
-void MSG_ReadDeltaEntity( msg_t *msg, entityState_t *from, entityState_t *to,
+void MSG_SetNetFields( vmNetField_t *vmEntityFields, int numEntityFields, int entityStateSize, int entityNetworkSize,
+					   vmNetField_t *vmPlayerFields, int numPlayerFields, int playerStateSize, int playerNetworkSize );
+void MSG_ShutdownNetFields( void );
+
+void MSG_WriteDeltaEntity( msg_t *msg, sharedEntityState_t *from, sharedEntityState_t *to,
+						   qboolean force );
+void MSG_ReadDeltaEntity( msg_t *msg, sharedEntityState_t *from, sharedEntityState_t *to, 
 						 int number );
 
-void MSG_WriteDeltaPlayerstate( msg_t *msg, struct playerState_s *from, struct playerState_s *to );
-void MSG_ReadDeltaPlayerstate( msg_t *msg, struct playerState_s *from, struct playerState_s *to );
+void MSG_WriteDeltaPlayerstate( msg_t *msg, sharedPlayerState_t *from, sharedPlayerState_t *to );
+void MSG_ReadDeltaPlayerstate( msg_t *msg, sharedPlayerState_t *from, sharedPlayerState_t *to, int number );
 
 
 void MSG_ReportChangeVectors_f( void );
@@ -133,11 +207,11 @@ NET
 
 #define	MAX_PACKET_USERCMDS		32		// max number of usercmd_t in a packet
 
-#define	MAX_SNAPSHOT_ENTITIES	256
+#define	MAX_SNAPSHOT_ENTITIES	512
 
 #define	PORT_ANY			-1
 
-#define	MAX_RELIABLE_COMMANDS	64			// max string commands buffered for restransmit
+#define	MAX_RELIABLE_COMMANDS	(64*MAX_SPLITVIEW) // max string commands buffered for restransmit
 
 typedef enum {
 	NA_BAD = 0,					// an address lookup failed
@@ -188,7 +262,7 @@ void		NET_LeaveMulticast6(void);
 void		NET_Sleep(int msec);
 
 
-#define	MAX_MSGLEN				16384		// max length of a message, which may
+#define	MAX_MSGLEN				32768		// max length of a message, which may
 											// be fragmented into multiple packets
 
 #define MAX_DOWNLOAD_WINDOW		48	// ACK window of 48 download chunks. Cannot set this higher, or clients
@@ -215,7 +289,7 @@ typedef struct {
 
 	// incoming fragment assembly buffer
 	int			fragmentSequence;
-	int			fragmentLength;
+	int			fragmentLength;	
 	byte		fragmentBuffer[MAX_MSGLEN];
 
 	// outgoing fragment buffer
@@ -251,35 +325,17 @@ PROTOCOL
 ==============================================================
 */
 
-#define	PROTOCOL_VERSION	71
-
-// Normally, legacy protocol = 68 but OA uses 71.
-//Open Arena up to 0.7.6 used 68
-//Open Arena 0.7.7 used 69
-//Open Arena 0.8.0 used protocol 70
-//Open Arena 0.8.x (0.8.1+) protocol 71
-#define PROTOCOL_LEGACY_VERSION	71
-// 1.31 - 67
+#define	PROTOCOL_VERSION	12
+#define PROTOCOL_LEGACY_VERSION	0
 
 // maintain a list of compatible protocols for demo playing
 // NOTE: that stuff only works with two digits protocols
 extern int demo_protocols[];
 
-#if !defined UPDATE_SERVER_NAME && !defined STANDALONE
-#define	UPDATE_SERVER_NAME	"update.quake3arena.com"
-#endif
+//#define	UPDATE_SERVER_NAME	"update.quake3arena.com"
 // override on command line, config files etc.
 #ifndef MASTER_SERVER_NAME
 #define MASTER_SERVER_NAME	"dpmaster.deathmask.net"
-#endif
-
-#ifndef STANDALONE
-  #ifndef AUTHORIZE_SERVER_NAME
-    #define	AUTHORIZE_SERVER_NAME	"authorize.quake3arena.com"
-  #endif
-  #ifndef PORT_AUTHORIZE
-  #define	PORT_AUTHORIZE		27952
-  #endif
 #endif
 
 #define	PORT_MASTER			27950
@@ -288,7 +344,6 @@ extern int demo_protocols[];
 #define	NUM_SERVER_PORTS	4		// broadcast scan this many ports after
 									// PORT_SERVER so a single machine can
 									// run multiple servers
-
 
 
 // the svc_strings[] array in cl_parse.c should mirror this
@@ -300,7 +355,7 @@ enum svc_ops_e {
 	svc_nop,
 	svc_gamestate,
 	svc_configstring,			// [short] [string] only in gamestate messages
-	svc_baseline,				// only in gamestate messages
+	svc_baseline,
 	svc_serverCommand,			// [string] to be executed by client game module
 	svc_download,				// [short] size [size bytes]
 	svc_snapshot,
@@ -317,7 +372,7 @@ enum svc_ops_e {
 //
 enum clc_ops_e {
 	clc_bad,
-	clc_nop,
+	clc_nop, 		
 	clc_move,				// [[usercmd_t]
 	clc_moveNoDelta,		// [[usercmd_t]
 	clc_clientCommand,		// [string] message
@@ -345,26 +400,29 @@ typedef enum {
 } vmInterpret_t;
 
 typedef enum {
-	TRAP_MEMSET = 100,
+	TRAP_MEMSET = 0,
 	TRAP_MEMCPY,
 	TRAP_STRNCPY,
 	TRAP_SIN,
 	TRAP_COS,
 	TRAP_ATAN2,
 	TRAP_SQRT,
-	TRAP_MATRIXMULTIPLY,
-	TRAP_ANGLEVECTORS,
-	TRAP_PERPENDICULARVECTOR,
 	TRAP_FLOOR,
 	TRAP_CEIL,
-
-	TRAP_TESTPRINTINT,
-	TRAP_TESTPRINTFLOAT
-} sharedTraps_t;
+	TRAP_ACOS,
+	TRAP_ASIN,
+	TRAP_TAN,
+	TRAP_ATAN,
+	TRAP_POW,
+	TRAP_EXP,
+	TRAP_LOG,
+	TRAP_LOG10,
+	TRAP_SYSCALL
+} qvmTraps_t;
 
 void	VM_Init( void );
-vm_t	*VM_Create( const char *module, intptr_t (*systemCalls)(intptr_t *),
-				   vmInterpret_t interpret );
+vm_t	*VM_Create( const char *module, intptr_t (*systemCalls)(intptr_t *), 
+				   vmInterpret_t interpret, int zoneTag, int heapRequestedSize );
 // module should be bare: "cgame", not "cgame.dll" or "vm/cgame.qvm"
 
 void	VM_Free( vm_t *vm );
@@ -374,6 +432,9 @@ void	VM_Forced_Unload_Done(void);
 vm_t	*VM_Restart(vm_t *vm, qboolean unpure);
 
 intptr_t		QDECL VM_Call( vm_t *vm, int callNum, ... );
+intptr_t		QDECL VM_SafeCall( vm_t *vm, int callnum );
+
+void	VM_GetVersion( vm_t *vm, int nameCallNum, int versionCallNum, char *apiName, int apiNameSize, int *major, int *minor );
 
 void	VM_Debug( int level );
 
@@ -381,14 +442,11 @@ void	*VM_ArgPtr( intptr_t intValue );
 void	*VM_ExplicitArgPtr( vm_t *vm, intptr_t intValue );
 
 #define	VMA(x) VM_ArgPtr(args[x])
-static ID_INLINE float _vmf(intptr_t x)
-{
-	floatint_t fi;
-	fi.i = (int) x;
-	return fi.f;
-}
-#define	VMF(x)	_vmf(args[x])
+#define	VMF(x)	IntAsFloat((int)args[x])
 
+intptr_t VM_HeapMalloc( int size );
+int VM_HeapAvailable( void );
+void VM_HeapFree( void *data );
 
 /*
 ==============================================================
@@ -417,6 +475,9 @@ void Cbuf_AddText( const char *text );
 void Cbuf_ExecuteText( int exec_when, const char *text );
 // this can be used in place of either Cbuf_AddText or Cbuf_InsertText
 
+void Cbuf_ExecuteTextSafe( int exec_when, const char *text );
+// used by VMs with special handling for unsafe calls.
+
 void Cbuf_Execute (void);
 // Pulls off \n terminated lines of text from the command buffer and sends
 // them through Cmd_ExecuteString.  Stops when the buffer is empty.
@@ -433,10 +494,12 @@ then searches for a command or variable that matches the first token.
 */
 
 typedef void (*xcommand_t) (void);
+typedef void (*completionFunc_t)( char *args, int argNum );
 
 void	Cmd_Init (void);
 
 void	Cmd_AddCommand( const char *cmd_name, xcommand_t function );
+void	Cmd_AddCommandWithCompletion( const char *cmd_name, xcommand_t function, completionFunc_t complete );
 // called by the init functions of other parts of the program to
 // register commands and functions to call for them.
 // The cmd_name is referenced later, so it should not be in temp memory
@@ -444,11 +507,11 @@ void	Cmd_AddCommand( const char *cmd_name, xcommand_t function );
 // as a clc_clientCommand instead of executed locally
 
 void	Cmd_RemoveCommand( const char *cmd_name );
-
-typedef void (*completionFunc_t)( char *args, int argNum );
+void	Cmd_RemoveCommandsByFunc( xcommand_t function );
 
 // don't allow VMs to remove system commands
-void	Cmd_RemoveCommandSafe( const char *cmd_name );
+void	Cmd_AddCommandSafe( const char *cmd_name, xcommand_t function, completionFunc_t complete );
+void	Cmd_RemoveCommandSafe( const char *cmd_name, xcommand_t function );
 
 void	Cmd_CommandCompletion( void(*callback)(const char *s) );
 // callback with each valid string
@@ -463,8 +526,8 @@ void	Cmd_ArgvBuffer( int arg, char *buffer, int bufferLength );
 char	*Cmd_Args (void);
 char	*Cmd_ArgsFrom( int arg );
 void	Cmd_ArgsBuffer( char *buffer, int bufferLength );
+void	Cmd_LiteralArgsBuffer( char *buffer, int bufferLength );
 char	*Cmd_Cmd (void);
-void	Cmd_Args_Sanitize( void );
 // The functions that execute commands get their parameters with these
 // functions. Cmd_Argv () will return an empty string, not a NULL
 // if arg > argc, so string operations are allways safe.
@@ -478,6 +541,8 @@ void	Cmd_ExecuteString( const char *text );
 // Parses a single line of text into arguments and tries to execute it
 // as if it was typed at the console
 
+void	Cmd_SaveCmdContext( void );
+void	Cmd_RestoreCmdContext( void );
 
 /*
 ==============================================================
@@ -518,21 +583,31 @@ void	Cvar_Register( vmCvar_t *vmCvar, const char *varName, const char *defaultVa
 void	Cvar_Update( vmCvar_t *vmCvar );
 // updates an interpreted modules' version of a cvar
 
-void 	Cvar_Set( const char *var_name, const char *value );
+cvar_t *Cvar_SetDefault( const char *var_name, const char *value );
+// if cvar exists, change the default value of the cvar. Otherwise, create using Cvar_Get.
+
+cvar_t *Cvar_Set2( const char *var_name, const char *value, int defaultFlags, qboolean force );
+//
+
+cvar_t	*Cvar_Set( const char *var_name, const char *value );
 // will create the variable with no flags if it doesn't exist
 
-cvar_t	*Cvar_Set2(const char *var_name, const char *value, qboolean force);
-// same as Cvar_Set, but allows more control over setting of cvar
+cvar_t	*Cvar_SetSafe( const char *var_name, const char *value);
+// same as Cvar_Set, but doesn't force setting the value (respects CVAR_ROM, etc)
 
-void	Cvar_SetSafe( const char *var_name, const char *value );
+cvar_t	*Cvar_User_Set( const char *var_name, const char *value );
+// same as Cvar_SetSafe, but defaults to CVAR_USER_CREATED
+
+void	Cvar_VM_Set( const char *var_name, const char *value, const char *vmName );
+void	Cvar_Server_Set( const char *var_name, const char *value );
 // sometimes we set variables from an untrusted source: fail if flags & CVAR_PROTECTED
 
-void Cvar_SetLatched( const char *var_name, const char *value);
-// don't set the cvar immediately
+cvar_t	*Cvar_SetValue( const char *var_name, float value );
+void	Cvar_VM_SetValue( const char *var_name, float value, const char *vmName );
+// expands value to a string and calls Cvar_Set/Cvar_VM_Set
 
-void	Cvar_SetValue( const char *var_name, float value );
-void	Cvar_SetValueSafe( const char *var_name, float value );
-// expands value to a string and calls Cvar_Set/Cvar_SetSafe
+cvar_t *Cvar_Unset(cvar_t *cv);
+// remove a cvar, returns next cvar in linked list
 
 float	Cvar_VariableValue( const char *var_name );
 int		Cvar_VariableIntegerValue( const char *var_name );
@@ -541,6 +616,10 @@ int		Cvar_VariableIntegerValue( const char *var_name );
 char	*Cvar_VariableString( const char *var_name );
 void	Cvar_VariableStringBuffer( const char *var_name, char *buffer, int bufsize );
 // returns an empty string if not defined
+void	Cvar_LatchedVariableStringBuffer( const char *var_name, char *buffer, int bufsize );
+// returns the latched value if there is one, else the normal one, empty string if not defined
+void	Cvar_DefaultVariableStringBuffer( const char *var_name, char *buffer, int bufsize );
+// returns the default value or empty string if not defined
 
 int	Cvar_Flags(const char *var_name);
 // returns CVAR_NONEXISTENT if cvar doesn't exist or the flags of that particular CVAR.
@@ -573,8 +652,13 @@ void	Cvar_InfoStringBuffer( int bit, char *buff, int buffsize );
 void Cvar_CheckRange( cvar_t *cv, float minVal, float maxVal, qboolean shouldBeIntegral );
 void Cvar_SetDescription( cvar_t *var, const char *var_description );
 
+void Cvar_CheckRangeSafe( const char *varName, float min, float max, qboolean integral );
+// basically a slightly modified Cvar_CheckRange for the interpreted modules
+
 void	Cvar_Restart(qboolean unsetVM);
 void	Cvar_Restart_f( void );
+
+void	Cvar_ResetDefaultOverrides( void );
 
 void Cvar_CompleteCvarName( char *args, int argNum );
 
@@ -595,21 +679,20 @@ issues.
 ==============================================================
 */
 
-// referenced flags
-// these are in loop specific order so don't change the order
-#define FS_GENERAL_REF	0x01
-#define FS_UI_REF		0x02
-#define FS_CGAME_REF	0x04
-// number of id paks that will never be autodownloaded from baseq3/missionpack
-#define NUM_ID_PAKS		9
-#define NUM_TA_PAKS		4
+typedef enum {
+	PAK_UNKNOWN,
+	PAK_FREE,
+	PAK_NO_DOWNLOAD,
+	PAK_COMMERCIAL,
+	PAK_MAX
+} pakType_t;
 
 #define	MAX_FILE_HANDLES	64
 
 #ifdef DEDICATED
-#	define Q3CONFIG_CFG "q3config_server.cfg"
+#	define Q3CONFIG_CFG "config_server.cfg"
 #else
-#	define Q3CONFIG_CFG "q3config.cfg"
+#	define Q3CONFIG_CFG "config.cfg"
 #endif
 
 qboolean FS_Initialized( void );
@@ -617,9 +700,12 @@ qboolean FS_Initialized( void );
 void	FS_InitFilesystem ( void );
 void	FS_Shutdown( qboolean closemfp );
 
-qboolean FS_ConditionalRestart(int checksumFeed, qboolean disconnect);
-void	FS_Restart( int checksumFeed );
+qboolean FS_ConditionalRestart(qboolean disconnect);
+void	FS_Restart( qboolean gameDirChanged );
 // shutdown and restart the filesystem so changes to fs_gamedir can take effect
+
+void	FS_GameValid( void );
+qboolean FS_TryLastValidGame( void );
 
 void FS_AddGameDirectory( const char *path, const char *dir );
 
@@ -631,8 +717,11 @@ char	**FS_ListFiles( const char *directory, const char *extension, int *numfiles
 void	FS_FreeFileList( char **list );
 
 qboolean FS_FileExists( const char *file );
+qboolean FS_FileInPathExists(const char *testpath);
 
 qboolean FS_CreatePath (char *OSPath);
+
+int FS_PathCmp( const char *s1, const char *s2 );
 
 int FS_FindVM(void **startSearch, char *found, int foundlen, const char *name, int enableDll);
 
@@ -641,7 +730,8 @@ qboolean FS_CompareZipChecksum(const char *zipfile);
 
 int		FS_LoadStack( void );
 
-int		FS_GetFileList(  const char *path, const char *extension, char *listbuf, int bufsize );
+char		**FS_GetFileList( const char *path, const char *extension, int *numfiles, qboolean allowNonPureFilesOnDisk );
+int		FS_GetFileListBuffer( const char *path, const char *extension, char *listbuf, int bufsize );
 int		FS_GetModList(  char *listbuf, int bufsize );
 
 void	FS_GetModDescription( const char *modDir, char *description, int descriptionLen );
@@ -651,6 +741,8 @@ fileHandle_t	FS_FOpenFileAppend( const char *filename );
 fileHandle_t	FS_FCreateOpenPipeFile( const char *filename );
 // will properly create any needed paths and deal with seperater character issues
 
+qboolean	FS_SV_FileExists( const char *filename );
+qboolean	FS_SV_RW_FileExists( const char *filename );
 fileHandle_t FS_SV_FOpenFileWrite( const char *filename );
 long		FS_SV_FOpenFileRead( const char *filename, fileHandle_t *fp );
 void	FS_SV_Rename( const char *from, const char *to, qboolean safe );
@@ -661,8 +753,9 @@ long		FS_FOpenFileRead( const char *qpath, fileHandle_t *file, qboolean uniqueFI
 // It is generally safe to always set uniqueFILE to true, because the majority of
 // file IO goes through FS_ReadFile, which Does The Right Thing already.
 
-int		FS_FileIsInPAK(const char *filename, int *pChecksum );
-// returns 1 if a file is in the PAK file, otherwise -1
+long FS_System_FOpenFileRead(const char *ospath, fileHandle_t *fp);
+
+int     FS_Delete( char *filename );    // only works inside the 'save' directory (for deleting savegames/images)
 
 int		FS_Write( const void *buffer, int len, fileHandle_t f );
 
@@ -711,19 +804,14 @@ qboolean FS_FilenameCompare( const char *s1, const char *s2 );
 
 const char *FS_LoadedPakNames( void );
 const char *FS_LoadedPakChecksums( void );
-const char *FS_LoadedPakPureChecksums( void );
 // Returns a space separated string containing the checksums of all loaded pk3 files.
 // Servers with sv_pure set will get this string and pass it to clients.
 
+int			FS_ReferencedPakChecksum( int n );
 const char *FS_ReferencedPakNames( void );
 const char *FS_ReferencedPakChecksums( void );
-const char *FS_ReferencedPakPureChecksums( void );
-// Returns a space separated string containing the checksums of all loaded
-// AND referenced pk3 files. Servers with sv_pure set will get this string
-// back from clients for pure validation
-
-void FS_ClearPakReferences( int flags );
-// clears referenced booleans on loaded pk3s
+// Returns a space separated string containing the checksums of all referenced pk3 files.
+// The server will send this to the clients so they can check which files should be auto-downloaded.
 
 void FS_PureServerSetReferencedPaks( const char *pakSums, const char *pakNames );
 void FS_PureServerSetLoadedPaks( const char *pakSums, const char *pakNames );
@@ -734,19 +822,52 @@ void FS_PureServerSetLoadedPaks( const char *pakSums, const char *pakNames );
 
 qboolean FS_CheckDirTraversal(const char *checkdir);
 qboolean FS_InvalidGameDir(const char *gamedir);
-qboolean FS_idPak(char *pak, char *base, int numPaks);
+pakType_t FS_ReferencedPakType( const char *name, int checksum, qboolean *installed );
 qboolean FS_ComparePaks( char *neededpaks, int len, qboolean dlstring );
 
-void FS_Rename( const char *from, const char *to );
+qboolean FS_Rename( const char *from, const char *to );
 
-void FS_Remove( const char *osPath );
-void FS_HomeRemove( const char *homePath );
+int FS_Remove( const char *osPath );
+int FS_HomeRemove( const char *homePath );
 
-void	FS_FilenameCompletion( const char *dir, const char *ext,
+void	FS_FilenameCompletion( char **filenames, int nfiles,
 		qboolean stripExt, void(*callback)(const char *s), qboolean allowNonPureFilesOnDisk );
 
 const char *FS_GetCurrentGameDir(void);
 qboolean FS_Which(const char *filename, void *searchPath);
+
+qboolean FS_IsDemoExt(const char *filename, int namelen);
+
+/*
+==============================================================
+
+Game config, loaded from mint-game.settings (see GAMESETTINGS define)
+
+==============================================================
+*/
+
+#define MAX_GAMEDIRS 16 // max gamedirs a mod can have
+#define MAX_LOADINGSCREENS	200
+
+typedef struct loadingScreen_s {
+	char	shaderName[MAX_QPATH];
+	float	aspect;
+	vec3_t	color;
+} loadingScreen_t;
+
+typedef struct {
+	char	gameDirs[MAX_GAMEDIRS][MAX_QPATH];
+	int		numGameDirs;
+
+#ifndef DEDICATED
+	char	defaultSound[MAX_QPATH];
+
+	loadingScreen_t	loadingScreens[MAX_LOADINGSCREENS];
+	int			numLoadingScreens;
+#endif
+} gameConfig_t;
+
+extern gameConfig_t com_gameConfig;
 
 /*
 ==============================================================
@@ -769,9 +890,9 @@ void Field_AutoComplete( field_t *edit );
 void Field_CompleteKeyname( void );
 void Field_CompleteFilename( const char *dir,
 		const char *ext, qboolean stripExt, qboolean allowNonPureFilesOnDisk );
-void Field_CompleteCommand( char *cmd,
+void Field_CompleteCommand( const char *cmd,
 		qboolean doCommands, qboolean doCvars );
-void Field_CompletePlayerName( const char **names, int count );
+void Field_CompleteList( const char *list );
 
 /*
 ==============================================================
@@ -780,10 +901,6 @@ MISC
 
 ==============================================================
 */
-
-// centralizing the declarations for cl_cdkey
-// https://zerowing.idsoftware.com/bugzilla/show_bug.cgi?id=470
-extern char cl_cdkey[34];
 
 // returned by Sys_GetProcessorFeatures
 typedef enum
@@ -808,7 +925,13 @@ typedef enum {
 	SE_KEY,			// evValue is a key code, evValue2 is the down flag
 	SE_CHAR,		// evValue is an ascii char
 	SE_MOUSE,		// evValue and evValue2 are relative signed x / y moves
+	SE_MOUSE_LAST = SE_MOUSE + MAX_SPLITVIEW - 1, // Reserve values for SE_MOUSE events for splitscreen players
 	SE_JOYSTICK_AXIS,	// evValue is an axis number and evValue2 is the current state (-127 to 127)
+	SE_JOYSTICK_AXIS_LAST = SE_JOYSTICK_AXIS + MAX_SPLITVIEW - 1, // Reserve values for SE_JOYSTICK_AXIS events for splitscreen players
+	SE_JOYSTICK_BUTTON,	// evValue is a button number and evValue2 is the down flag
+	SE_JOYSTICK_BUTTON_LAST = SE_JOYSTICK_BUTTON + MAX_SPLITVIEW - 1, // Reserve values for SE_JOYSTICK_BUTTON events for splitscreen players
+	SE_JOYSTICK_HAT,	// evValue is a hat number and evValue2 is the state
+	SE_JOYSTICK_HAT_LAST = SE_JOYSTICK_HAT + MAX_SPLITVIEW - 1, // Reserve values for SE_JOYSTICK_HAT events for splitscreen players
 	SE_CONSOLE		// evPtr is a char*
 } sysEventType_t;
 
@@ -833,7 +956,8 @@ void 		QDECL Com_Printf( const char *fmt, ... ) __attribute__ ((format (printf, 
 void 		QDECL Com_DPrintf( const char *fmt, ... ) __attribute__ ((format (printf, 1, 2)));
 void 		QDECL Com_Error( int code, const char *fmt, ... ) __attribute__ ((noreturn, format(printf, 2, 3)));
 void 		Com_Quit_f( void ) __attribute__ ((noreturn));
-void		Com_GameRestart(int checksumFeed, qboolean disconnect);
+void		Com_GameRestart(qboolean disconnect);
+void		Com_ExecuteCfg(void);
 
 int			Com_Milliseconds( void );	// will be journaled properly
 unsigned	Com_BlockChecksum( const void *buffer, int length );
@@ -844,18 +968,17 @@ int			Com_RealTime(qtime_t *qtime);
 qboolean	Com_SafeMode( void );
 void		Com_RunAndTimeServerPacket(netadr_t *evFrom, msg_t *buf);
 
-qboolean	Com_IsVoipTarget(uint8_t *voipTargets, int voipTargetsSize, int clientNum);
+qboolean	Com_IsVoipTarget(uint8_t *voipTargets, int voipTargetsSize, int playerNum);
+
+qboolean	Com_GameIsSinglePlayer(void);
 
 void		Com_StartupVariable( const char *match );
 // checks for and removes command line "+set var arg" constructs
 // if match is NULL, all set commands will be executed, otherwise
 // only a set with the exact name.  Only used during startup.
 
-qboolean		Com_PlayerNameToFieldString( char *str, int length, const char *name );
-qboolean		Com_FieldStringToPlayerName( char *name, int length, const char *rawname );
-int QDECL	Com_strCompare( const void *a, const void *b );
 
-
+extern	cvar_t	*com_fs_pure;
 extern	cvar_t	*com_developer;
 extern	cvar_t	*com_dedicated;
 extern	cvar_t	*com_speeds;
@@ -863,7 +986,7 @@ extern	cvar_t	*com_timescale;
 extern	cvar_t	*com_sv_running;
 extern	cvar_t	*com_cl_running;
 extern	cvar_t	*com_version;
-extern	cvar_t	*com_blood;
+extern	cvar_t	*com_singlePlayerActive;
 extern	cvar_t	*com_buildScript;		// for building release pak files
 extern	cvar_t	*com_journal;
 extern	cvar_t	*com_cameraMode;
@@ -872,9 +995,9 @@ extern	cvar_t	*com_unfocused;
 extern	cvar_t	*com_maxfpsUnfocused;
 extern	cvar_t	*com_minimized;
 extern	cvar_t	*com_maxfpsMinimized;
+#if idppc_altivec
 extern	cvar_t	*com_altivec;
-extern	cvar_t	*com_standalone;
-extern	cvar_t	*com_basegame;
+#endif
 extern	cvar_t	*com_homepath;
 
 // both client and server must agree to pause
@@ -884,6 +1007,7 @@ extern	cvar_t	*sv_paused;
 extern	cvar_t	*cl_packetdelay;
 extern	cvar_t	*sv_packetdelay;
 
+extern	cvar_t	*com_productName;
 extern	cvar_t	*com_gamename;
 extern	cvar_t	*com_protocol;
 #ifdef LEGACY_PROTOCOL
@@ -893,6 +1017,12 @@ extern	cvar_t	*com_legacyprotocol;
 extern  cvar_t  *con_autochat;
 #endif
 
+extern	cvar_t	*com_demoext;
+
+#ifdef USE_RENDERER_DLOPEN
+extern	cvar_t	*com_renderer;
+#endif
+
 // com_speeds times
 extern	int		time_game;
 extern	int		time_frontend;
@@ -900,8 +1030,10 @@ extern	int		time_backend;		// renderer backend time
 
 extern	int		com_frameTime;
 
-extern	qboolean	com_errorEntered;
+extern	int			com_errorEntered;
 extern	qboolean	com_fullyInitialized;
+
+extern	int		com_playVideo;
 
 extern	fileHandle_t	com_journalFile;
 extern	fileHandle_t	com_journalDataFile;
@@ -909,10 +1041,11 @@ extern	fileHandle_t	com_journalDataFile;
 typedef enum {
 	TAG_FREE,
 	TAG_GENERAL,
-	TAG_BOTLIB,
 	TAG_RENDERER,
 	TAG_SMALL,
-	TAG_STATIC
+	TAG_STATIC,
+	TAG_GAME,
+	TAG_CGAME
 } memtag_t;
 
 /*
@@ -922,7 +1055,6 @@ server vm
 server clipmap
 ---mark---
 renderer initialization (shaders, etc)
-UI vm
 cgame vm
 renderer map
 renderer models
@@ -934,24 +1066,22 @@ temp file loading
 
 */
 
-#if !defined(NDEBUG) && !defined(BSPC)
-	#define ZONE_DEBUG
-#endif
-
 #ifdef ZONE_DEBUG
 #define Z_TagMalloc(size, tag)			Z_TagMallocDebug(size, tag, #size, __FILE__, __LINE__)
 #define Z_Malloc(size)					Z_MallocDebug(size, #size, __FILE__, __LINE__)
 #define S_Malloc(size)					S_MallocDebug(size, #size, __FILE__, __LINE__)
+#define Z_Free(ptr)						Z_FreeDebug(ptr, #ptr, __FILE__, __LINE__)
 void *Z_TagMallocDebug( int size, int tag, char *label, char *file, int line );	// NOT 0 filled memory
 void *Z_MallocDebug( int size, char *label, char *file, int line );			// returns 0 filled memory
 void *S_MallocDebug( int size, char *label, char *file, int line );			// returns 0 filled memory
+void Z_FreeDebug( void *ptr, char *label, char *file, int line  );
 #else
 void *Z_TagMalloc( int size, int tag );	// NOT 0 filled memory
 void *Z_Malloc( int size );			// returns 0 filled memory
 void *S_Malloc( int size );			// NOT 0 filled memory only for small allocations
-#endif
 void Z_Free( void *ptr );
-void Z_FreeTags( int tag );
+#endif
+int Z_FreeTags( int tag );
 int Z_AvailableMemory( void );
 void Z_LogHeap( void );
 
@@ -965,13 +1095,53 @@ void Hunk_FreeTempMemory( void *buf );
 int	Hunk_MemoryRemaining( void );
 void Hunk_Log( void);
 
+typedef struct {
+	void *pointer;
+	int maxElements;
+	int elementLength;
+	qboolean freeable;
+} darray_t;
+
+#ifdef ZONE_DEBUG
+#define DA_Init(_darray,_maxElements,_elementLength,_freeable) DA_InitDebug(_darray,_maxElements,_elementLength,_freeable,__FILE__,__LINE__)
+#define DA_Free( darray ) DA_FreeDebug( darray, __FILE__, __LINE__ )
+void DA_InitDebug( darray_t *darray, int maxElements, int elementLength, qboolean freeable, char *file, int line );
+void DA_FreeDebug( darray_t *darray, char *file, int line );
+#else
+void DA_Init( darray_t *darray, int maxElements, int elementLength, qboolean freeable );
+void DA_Free( darray_t *darray );
+#endif
+void DA_Clear( darray_t *darray );
+void DA_Copy( const darray_t in, darray_t *out );
+
+void DA_ClearElement( darray_t *darray, int num );
+void DA_SetElement( darray_t *darray, int num, const void *data );
+void DA_GetElement( const darray_t darray, int num, void *data );
+void *DA_ElementPointer( const darray_t darray, int num );
+
 void Com_TouchMemory( void );
+
+void Z_VM_InitHeap( int tag, void *preallocated, int size );
+int Z_VM_HeapAvailable( int tag );
+void Z_VM_ShutdownHeap( int tag );
 
 // commandLine should not include the executable name (argv[0])
 void Com_Init( char *commandLine );
 void Com_Frame( void );
 void Com_Shutdown( void );
 
+/*
+==============================================================
+
+REFRESH DLL
+
+==============================================================
+*/
+
+extern	refexport_t		re;		// interface to refresh .dll
+
+void Com_ShutdownRef( void );
+void Com_InitRef( refimport_t *ri );
 
 /*
 ==============================================================
@@ -988,19 +1158,23 @@ void CL_InitKeyCommands( void );
 // the keyboard binding interface must be setup before execing
 // config files, but the rest of client startup will happen later
 
+void CL_InitJoyRemapCommands( void );
+
 void CL_Init( void );
 void CL_Disconnect( qboolean showMainMenu );
 void CL_Shutdown(char *finalmsg, qboolean disconnect, qboolean quit);
 void CL_Frame( int msec );
-qboolean CL_GameCommand( void );
+void CL_GameConsoleText( qboolean restoredText );
 void CL_KeyEvent (int key, qboolean down, unsigned time);
 
-void CL_CharEvent( int key );
+void CL_CharEvent( int character );
 // char events are for field typing, not game control
 
-void CL_MouseEvent( int dx, int dy, int time );
+void CL_MouseEvent( int localPlayerNum, int dx, int dy, int time );
 
-void CL_JoystickEvent( int axis, int value, int time );
+void CL_JoystickAxisEvent( int localPlayerNum, int axis, int value, unsigned time );
+void CL_JoystickButtonEvent( int localPlayerNum, int button, qboolean down, unsigned time );
+void CL_JoystickHatEvent( int localPlayerNum, int hat, int state, unsigned time );
 
 void CL_PacketEvent( netadr_t from, msg_t *msg );
 
@@ -1012,28 +1186,20 @@ void CL_MapLoading( void );
 // will be cleared, so the client must shutdown cgame, ui, and
 // the renderer
 
-void	CL_ForwardCommandToServer( const char *string );
-// adds the current command line as a clc_clientCommand to the client message.
-// things like godmode, noclip, etc, are commands directed to the server,
-// so when they are typed in at the console, they will need to be forwarded.
-
-void CL_CDDialog( void );
-// bring up the "need a cd to play" dialog
-
 void CL_FlushMemory( void );
 // dump all memory on an error
 
 void CL_ShutdownAll(qboolean shutdownRef);
 // shutdown client
 
-void CL_InitRef(void);
-// initialize renderer interface
-
 void CL_StartHunkUsers( qboolean rendererOnly );
 // start all the client stuff using the hunk
 
-void CL_Snd_Shutdown(void);
-// Restart sound subsystem
+qboolean CL_ConnectedToRemoteServer( void );
+// returns qtrue if connected to a remote server
+
+void CL_MissingDefaultCfg( const char *gamedir );
+// connected to a remote server and is missing default.cfg for new fs_game
 
 void Key_KeynameCompletion( void(*callback)(const char *s) );
 // for keyname autocompletion
@@ -1057,14 +1223,7 @@ void SV_Shutdown( char *finalmsg );
 void SV_Frame( int msec );
 void SV_PacketEvent( netadr_t from, msg_t *msg );
 int SV_FrameMsec(void);
-qboolean SV_GameCommand( void );
 int SV_SendQueuedPackets(void);
-
-//
-// UI interface
-//
-qboolean UI_GameCommand( void );
-qboolean UI_usesUniqueCDKey(void);
 
 //
 // input interface
@@ -1082,8 +1241,6 @@ NON-PORTABLE SYSTEM SERVICES
 ==============================================================
 */
 
-#define MAX_JOYSTICK_AXIS 16
-
 void	Sys_Init (void);
 
 // general development dll loading for virtual machine testing
@@ -1093,11 +1250,15 @@ void	Sys_UnloadDll( void *dllHandle );
 
 qboolean Sys_DllExtension( const char *name );
 
+qboolean Sys_PathIsAbsolute( const char *path );
+
 char	*Sys_GetCurrentUser( void );
 
 void	QDECL Sys_Error( const char *error, ...) __attribute__ ((noreturn, format (printf, 1, 2)));
 void	Sys_Quit (void) __attribute__ ((noreturn));
 char	*Sys_GetClipboardData( void );	// note that this isn't journaled...
+qboolean Sys_GetCapsLockMode( void );
+qboolean Sys_GetNumLockMode( void );
 
 void	Sys_Print( const char *msg );
 
@@ -1124,7 +1285,9 @@ void		Sys_ShowIP(void);
 
 FILE	*Sys_FOpen( const char *ospath, const char *mode );
 qboolean Sys_Mkdir( const char *path );
+qboolean Sys_Rmdir( const char *path );
 FILE	*Sys_Mkfifo( const char *ospath );
+int		Sys_StatFile( char *ospath );
 char	*Sys_Cwd( void );
 void	Sys_SetDefaultInstallPath(const char *path);
 char	*Sys_DefaultInstallPath(void);
@@ -1171,6 +1334,19 @@ dialogResult_t Sys_Dialog( dialogType_t type, const char *message, const char *t
 void Sys_RemovePIDFile( const char *gamedir );
 void Sys_InitPIDFile( const char *gamedir );
 
+/*
+==============================================================
+
+CONSOLE LOG ACCESS
+
+==============================================================
+*/
+
+unsigned int CON_LogRead( char *out, unsigned int outSize );
+void CON_LogSaveReadPos( void );
+void CON_LogRestoreReadPos( void );
+
+
 /* This is based on the Adaptive Huffman algorithm described in Sayood's Data
  * Compression book.  The ranks are not actually stored, but implicitly defined
  * by the location of a node within a doubly-linked list */
@@ -1179,7 +1355,7 @@ void Sys_InitPIDFile( const char *gamedir );
 #define INTERNAL_NODE (HMAX+1)
 
 typedef struct nodetype {
-	struct	nodetype *left, *right, *parent; /* tree structure */
+	struct	nodetype *left, *right, *parent; /* tree structure */ 
 	struct	nodetype *next, *prev; /* doubly-linked list */
 	struct	nodetype **head; /* highest ranked node in block */
 	int		weight;

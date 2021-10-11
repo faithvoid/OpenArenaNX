@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 
@@ -61,23 +69,46 @@ char *Sys_DefaultHomePath(void)
 
 	if( !*homePath && com_homepath != NULL )
 	{
-		if( ( p = getenv( "HOME" ) ) != NULL )
-		{
-			Com_sprintf(homePath, sizeof(homePath), "%s%c", p, PATH_SEP);
 #ifdef __APPLE__
-			Q_strcat(homePath, sizeof(homePath),
-				"Library/Application Support/");
-
-			if(com_homepath->string[0])
-				Q_strcat(homePath, sizeof(homePath), com_homepath->string);
-			else
-				Q_strcat(homePath, sizeof(homePath), HOMEPATH_NAME_MACOSX);
+		if( ( p = getenv( "HOME" ) ) != NULL && *p != '\0' )
+		{
+			Com_sprintf(homePath, sizeof(homePath), "%s%cLibrary%cApplication Support%c%s", p, PATH_SEP, PATH_SEP, PATH_SEP, com_homepath->string);
+		}
 #else
-			if(com_homepath->string[0])
-				Q_strcat(homePath, sizeof(homePath), com_homepath->string);
+		char	directory[MAX_OSPATH];
+		char	*s;
+
+		Q_strncpyz( directory, com_homepath->string, sizeof(directory) );
+
+		// convert home directory name to lower case and replace spaces with hyphens
+		s = directory;
+		while( *s )
+		{
+			if( *s == ' ' )
+			{
+				*s = '-';
+			}
 			else
-				Q_strcat(homePath, sizeof(homePath), HOMEPATH_NAME_UNIX);
+			{
+				*s = tolower(*s);
+			}
+			s++;
+		}
+
+		if( ( p = getenv( "XDG_DATA_HOME" ) ) != NULL && *p != '\0' )
+		{
+			Com_sprintf(homePath, sizeof(homePath), "%s%c%s", p, PATH_SEP, directory);
+		}
+		else if( ( p = getenv( "HOME" ) ) != NULL && *p != '\0' )
+		{
+			Com_sprintf(homePath, sizeof(homePath), "%s%c.local%cshare%c%s", p, PATH_SEP, PATH_SEP, PATH_SEP, directory);
+		}
 #endif
+
+		if( !*homePath )
+		{
+			Com_Printf("Unable to detect home path\n");
+			return NULL;
 		}
 	}
 
@@ -258,6 +289,21 @@ qboolean Sys_Mkdir( const char *path )
 
 /*
 ==================
+Sys_Rmdir
+==================
+*/
+qboolean Sys_Rmdir( const char *path )
+{
+	int result = rmdir( path );
+
+	if( result != 0 )
+		return qfalse;
+
+	return qtrue;
+}
+
+/*
+==================
 Sys_Mkfifo
 ==================
 */
@@ -284,6 +330,27 @@ FILE *Sys_Mkfifo( const char *ospath )
 	}
 
 	return fifo;
+}
+
+/*
+==============
+Sys_StatFile
+
+Test a file given OS path:
+returns -1 if not found
+returns 1 if directory
+returns 0 otherwise
+==============
+*/
+int Sys_StatFile( char *ospath ) {
+	struct stat stat_buf;
+	if ( stat( ospath, &stat_buf ) == -1 ) {
+		return -1;
+	}
+	if ( S_ISDIR( stat_buf.st_mode ) ) {
+		return 1;
+	}
+	return 0;
 }
 
 /*
@@ -960,4 +1027,19 @@ qboolean Sys_DllExtension( const char *name ) {
 	}
 
 	return qfalse;
+}
+
+/*
+=================
+Sys_PathIsAbsolute
+
+Check if filename is an absolute path.
+=================
+*/
+qboolean Sys_PathIsAbsolute( const char *path ) {
+	if ( !path ) {
+		return qfalse;
+	}
+
+	return ( path[0] == '/' );
 }

@@ -1,23 +1,31 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 Copyright (C) 2005 Stuart Dalton (badcdev@gmail.com)
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 
@@ -36,6 +44,254 @@ cvar_t *s_muteWhenUnfocused;
 
 static soundInterface_t si;
 
+listener_t listeners[MAX_LISTENERS];
+
+/*
+=================
+S_ListenersInit
+=================
+*/
+void S_ListenersInit(void) {
+	int i;
+
+	for (i = 0; i < MAX_LISTENERS; ++i)
+	{
+		listeners[i].valid = qfalse;
+		listeners[i].updated = qfalse;
+
+		listeners[i].number = -1;
+		VectorClear(listeners[i].origin);
+		AxisClear(listeners[i].axis);
+		listeners[i].inwater = 0;
+		listeners[i].firstPerson = qfalse;
+	}
+}
+
+/*
+=================
+S_ListenersEndFrame
+=================
+*/
+void S_ListenersEndFrame(void) {
+	int i;
+
+	for (i = 0; i < MAX_LISTENERS; ++i)
+	{
+		// Didn't receive update for this listener this frame, so free it.
+		if (!listeners[i].updated)
+			listeners[i].valid = qfalse;
+
+		listeners[i].updated = qfalse;
+	}
+}
+
+/*
+=================
+S_HearingThroughEntity
+=================
+*/
+qboolean S_HearingThroughEntity( int entityNum )
+{
+	int i;
+
+	// Note: Listeners may be one frame out of date.
+	for (i = 0; i < MAX_LISTENERS; ++i)
+	{
+		if (listeners[i].valid && listeners[i].number == entityNum)
+		{
+			return listeners[i].firstPerson;
+		}
+	}
+
+	return qfalse;
+}
+
+/*
+====================
+S_EntityIsListener
+====================
+*/
+qboolean S_EntityIsListener(int entityNum)
+{
+	int i;
+
+	// NOTE: Listeners may be one frame out of date.
+	for (i = 0; i < MAX_LISTENERS; ++i)
+	{
+		if (listeners[i].valid && listeners[i].number == entityNum)
+		{
+			return qtrue;
+		}
+	}
+
+	return qfalse;
+}
+
+/*
+====================
+S_ClosestListener
+====================
+*/
+int S_ClosestListener(const vec3_t origin) {
+	float dist, closestDist = INT_MAX;
+	int closestListener = -1;
+	int i;
+
+	// NOTE: Listeners may be one frame out of date.
+	for (i = 0; i < MAX_LISTENERS; ++i)
+	{
+		if (listeners[i].valid)
+		{
+			dist = Distance(origin, listeners[i].origin);
+			if (dist < closestDist) {
+				closestDist = dist;
+				closestListener = i;
+			}
+		}
+	}
+
+	return closestListener;
+}
+
+/*
+====================
+S_ListenersClosestDistance
+====================
+*/
+float S_ListenersClosestDistance(const vec3_t origin) {
+	float dist, closestDist = INT_MAX;
+	int i;
+
+	// NOTE: Listeners may be one frame out of date.
+	for (i = 0; i < MAX_LISTENERS; ++i)
+	{
+		if (listeners[i].valid)
+		{
+			dist = Distance(origin, listeners[i].origin);
+			if (dist < closestDist) {
+				closestDist = dist;
+			}
+		}
+	}
+	
+	return closestDist;
+}
+
+/*
+====================
+S_ListenersClosestDistanceSquared
+====================
+*/
+float S_ListenersClosestDistanceSquared(const vec3_t origin) {
+	float dist, closestDist = INT_MAX;
+	int i;
+
+	// NOTE: Listeners may be one frame out of date.
+	for (i = 0; i < MAX_LISTENERS; ++i)
+	{
+		if (listeners[i].valid)
+		{
+			dist = DistanceSquared(origin, listeners[i].origin);
+			if (dist < closestDist) {
+				closestDist = dist;
+			}
+		}
+	}
+	
+	return closestDist;
+}
+
+/*
+====================
+S_ListenerNumForEntity
+====================
+*/
+int S_ListenerNumForEntity(int entityNum, qboolean create)
+{
+	int i;
+	int freeListener = -1;
+
+	for (i = 0; i < MAX_LISTENERS; ++i)
+	{
+		if (listeners[i].valid)
+		{
+			if (listeners[i].number == entityNum)
+				return i;
+		}
+		else if (create && freeListener == -1)
+			freeListener = i;
+	}
+
+	if (create && freeListener == -1)
+	{
+		// Find listener that might be freed next frame, otherwise we
+		// could fail to get a slot when listener changes entityNums.
+		for (i = MAX_LISTENERS-1; i >= 0; --i)
+		{
+			if (listeners[i].valid && !listeners[i].updated)
+			{
+				freeListener = i;
+				break;
+			}
+		}
+	}
+
+	return freeListener;
+}
+
+/*
+=================
+S_UpdateListener
+=================
+*/
+void S_UpdateListener(int entityNum, const vec3_t origin, const vec3_t axis[3], int inwater, qboolean firstPerson)
+{
+	int listener;
+
+	// Get listener for entityNum.
+	listener = S_ListenerNumForEntity(entityNum, qtrue);
+
+	if (listener < 0 || listener >= MAX_LISTENERS)
+		return;
+
+	listeners[listener].valid = qtrue;
+	listeners[listener].updated = qtrue;
+
+	// Update listener info.
+	listeners[listener].number = entityNum;
+	VectorCopy(origin, listeners[listener].origin);
+	VectorCopy(axis[0], listeners[listener].axis[0]);
+	VectorCopy(axis[1], listeners[listener].axis[1]);
+	VectorCopy(axis[2], listeners[listener].axis[2]);
+	listeners[listener].inwater = inwater;
+	listeners[listener].firstPerson = firstPerson;
+}
+
+/*
+=================
+S_NumUpdatedListeners
+
+Returns the number of listeners updated this frame.
+
+Listeners are valid for one frame after they're added, so they can carry over
+between frames. Therefore this function has very limited usefulness.
+=================
+*/
+int S_NumUpdatedListeners( void ) {
+	int i;
+	int numListeners = 0;
+
+	for (i = 0; i < MAX_LISTENERS; ++i)
+	{
+		if (listeners[i].updated)
+		{
+			numListeners++;
+		}
+	}
+
+	return numListeners;
+}
+
 /*
 =================
 S_ValidateInterface
@@ -48,6 +304,11 @@ static qboolean S_ValidSoundInterface( soundInterface_t *si )
 	if( !si->StartLocalSound ) return qfalse;
 	if( !si->StartBackgroundTrack ) return qfalse;
 	if( !si->StopBackgroundTrack ) return qfalse;
+	if( !si->StartStreamingSound ) return qfalse;
+	if( !si->StopStreamingSound ) return qfalse;
+	if( !si->QueueStreamingSound ) return qfalse;
+	if( !si->GetStreamPlayCount ) return qfalse;
+	if( !si->SetStreamVolume ) return qfalse;
 	if( !si->RawSamples ) return qfalse;
 	if( !si->StopAllSounds ) return qfalse;
 	if( !si->ClearLoopingSounds ) return qfalse;
@@ -60,6 +321,7 @@ static qboolean S_ValidSoundInterface( soundInterface_t *si )
 	if( !si->DisableSounds ) return qfalse;
 	if( !si->BeginRegistration ) return qfalse;
 	if( !si->RegisterSound ) return qfalse;
+	if( !si->SoundDuration ) return qfalse;
 	if( !si->ClearSoundBuffer ) return qfalse;
 	if( !si->SoundInfo ) return qfalse;
 	if( !si->SoundList ) return qfalse;
@@ -104,10 +366,10 @@ void S_StartLocalSound( sfxHandle_t sfx, int channelNum )
 S_StartBackgroundTrack
 =================
 */
-void S_StartBackgroundTrack( const char *intro, const char *loop )
+void S_StartBackgroundTrack( const char *intro, const char *loop, float volume, float loopVolume )
 {
 	if( si.StartBackgroundTrack ) {
-		si.StartBackgroundTrack( intro, loop );
+		si.StartBackgroundTrack( intro, loop, volume, loopVolume );
 	}
 }
 
@@ -121,6 +383,62 @@ void S_StopBackgroundTrack( void )
 	if( si.StopBackgroundTrack ) {
 		si.StopBackgroundTrack( );
 	}
+}
+
+/*
+=================
+S_StartStreamingSound
+=================
+*/
+void S_StartStreamingSound( int stream, int entityNum, const char *filename, float volume )
+{
+	if(si.StartStreamingSound)
+		si.StartStreamingSound(stream, entityNum, filename, volume);
+}
+
+/*
+=================
+S_StopStreamingSound
+=================
+*/
+void S_StopStreamingSound( int stream )
+{
+	if(si.StopStreamingSound)
+		si.StopStreamingSound(stream);
+}
+
+/*
+=================
+S_QueueStreamingSound
+=================
+*/
+void S_QueueStreamingSound( int stream, const char *filename, float volume )
+{
+	if(si.QueueStreamingSound)
+		si.QueueStreamingSound(stream, filename, volume);
+}
+
+/*
+=================
+S_GetStreamPlayCount
+=================
+*/
+int  S_GetStreamPlayCount( int stream )
+{
+	if(si.GetStreamPlayCount)
+		return si.GetStreamPlayCount(stream);
+	return 0;
+}
+
+/*
+=================
+S_SetStreamVolume
+=================
+*/
+void S_SetStreamVolume( int stream, float volume )
+{
+	if(si.SetStreamVolume)
+		si.SetStreamVolume(stream, volume);
 }
 
 /*
@@ -202,11 +520,10 @@ void S_StopLoopingSound( int entityNum )
 S_Respatialize
 =================
 */
-void S_Respatialize( int entityNum, const vec3_t origin,
-		vec3_t axis[3], int inwater )
+void S_Respatialize( int entityNum, const vec3_t origin, vec3_t axis[3], int inwater, qboolean firstPerson )
 {
 	if( si.Respatialize ) {
-		si.Respatialize( entityNum, origin, axis, inwater );
+		si.Respatialize( entityNum, origin, axis, inwater, firstPerson );
 	}
 }
 
@@ -251,6 +568,8 @@ void S_Update( void )
 	if( si.Update ) {
 		si.Update( );
 	}
+
+	S_ListenersEndFrame();
 }
 
 /*
@@ -289,6 +608,19 @@ sfxHandle_t	S_RegisterSound( const char *sample, qboolean compressed )
 	} else {
 		return 0;
 	}
+}
+
+/*
+=================
+S_SoundDuration
+=================
+*/
+int S_SoundDuration( sfxHandle_t handle )
+{
+	if( si.SoundDuration )
+		return si.SoundDuration( handle );
+	else
+		return 0;
 }
 
 /*
@@ -395,77 +727,6 @@ void S_MasterGain( float gain )
 
 /*
 =================
-S_Play_f
-=================
-*/
-void S_Play_f( void ) {
-	int 		i;
-	int			c;
-	sfxHandle_t	h;
-
-	if( !si.RegisterSound || !si.StartLocalSound ) {
-		return;
-	}
-
-	c = Cmd_Argc();
-
-	if( c < 2 ) {
-		Com_Printf ("Usage: play <sound filename> [sound filename] [sound filename] ...\n");
-		return;
-	}
-
-	for( i = 1; i < c; i++ ) {
-		h = si.RegisterSound( Cmd_Argv(i), qfalse );
-
-		if( h ) {
-			si.StartLocalSound( h, CHAN_LOCAL_SOUND );
-		}
-	}
-}
-
-/*
-=================
-S_Music_f
-=================
-*/
-void S_Music_f( void ) {
-	int		c;
-
-	if( !si.StartBackgroundTrack ) {
-		return;
-	}
-
-	c = Cmd_Argc();
-
-	if ( c == 2 ) {
-		si.StartBackgroundTrack( Cmd_Argv(1), NULL );
-	} else if ( c == 3 ) {
-		si.StartBackgroundTrack( Cmd_Argv(1), Cmd_Argv(2) );
-	} else {
-		Com_Printf ("Usage: music <musicfile> [loopfile]\n");
-		return;
-	}
-
-}
-
-/*
-=================
-S_Music_f
-=================
-*/
-void S_StopMusic_f( void )
-{
-	if(!si.StopBackgroundTrack)
-		return;
-
-	si.StopBackgroundTrack();
-}
-
-
-//=============================================================================
-
-/*
-=================
 S_Init
 =================
 */
@@ -490,15 +751,13 @@ void S_Init( void )
 	} else {
 
 		S_CodecInit( );
+		S_ListenersInit( );
 
-		Cmd_AddCommand( "play", S_Play_f );
-		Cmd_AddCommand( "music", S_Music_f );
-		Cmd_AddCommand( "stopmusic", S_StopMusic_f );
 		Cmd_AddCommand( "s_list", S_SoundList );
 		Cmd_AddCommand( "s_stop", S_StopAllSounds );
 		Cmd_AddCommand( "s_info", S_SoundInfo );
 
-		cv = Cvar_Get( "s_useOpenAL", "1", CVAR_ARCHIVE | CVAR_LATCH );
+		cv = Cvar_Get( "s_useOpenAL", "0", CVAR_ARCHIVE | CVAR_LATCH );
 		if( cv->integer ) {
 			//OpenAL
 			started = S_AL_Init( &si );
@@ -538,9 +797,6 @@ void S_Shutdown( void )
 
 	Com_Memset( &si, 0, sizeof( soundInterface_t ) );
 
-	Cmd_RemoveCommand( "play" );
-	Cmd_RemoveCommand( "music");
-	Cmd_RemoveCommand( "stopmusic");
 	Cmd_RemoveCommand( "s_list" );
 	Cmd_RemoveCommand( "s_stop" );
 	Cmd_RemoveCommand( "s_info" );

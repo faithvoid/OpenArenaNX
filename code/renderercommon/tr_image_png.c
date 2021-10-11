@@ -1,21 +1,32 @@
 /*
 ===========================================================================
-ioquake3 png decoder
+ioquake3 png decoder and encoder
 Copyright (C) 2007,2008 Joerg Dietrich
+Copyright (C) 2011 Zack Middleton
 
-This program is free software; you can redistribute it and/or
-modify it under the terms of the GNU General Public License
-as published by the Free Software Foundation; either version 2
-of the License, or (at your option) any later version.
+This file is part of Spearmint Source Code.
 
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
+Spearmint Source Code is free software; you can redistribute it
+and/or modify it under the terms of the GNU General Public License as
+published by the Free Software Foundation; either version 3 of the License,
+or (at your option) any later version.
+
+Spearmint Source Code is distributed in the hope that it will be
+useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with this program; if not, write to the Free Software
-Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 
@@ -78,6 +89,7 @@ typedef uint32_t PNG_ChunkCRC;
 #define MAKE_CHUNKTYPE(a,b,c,d) (((a) << 24) | ((b) << 16) | ((c) << 8) | ((d)))
 
 #define PNG_ChunkType_IHDR MAKE_CHUNKTYPE('I', 'H', 'D', 'R')
+#define PNG_ChunkType_tEXt MAKE_CHUNKTYPE('t', 'E', 'X', 't')
 #define PNG_ChunkType_PLTE MAKE_CHUNKTYPE('P', 'L', 'T', 'E')
 #define PNG_ChunkType_IDAT MAKE_CHUNKTYPE('I', 'D', 'A', 'T')
 #define PNG_ChunkType_IEND MAKE_CHUNKTYPE('I', 'E', 'N', 'D')
@@ -1900,7 +1912,7 @@ static qboolean DecodeImageInterlaced(struct PNG_Chunk_IHDR *IHDR,
  *  The PNG loader
  */
 
-void R_LoadPNG(const char *name, byte **pic, int *width, int *height)
+void R_LoadPNG(const char *name, int *numTexLevels, textureLevel_t **pic)
 {
 	struct BufferedFile *ThePNG;
 	byte *OutBuffer;
@@ -1944,16 +1956,7 @@ void R_LoadPNG(const char *name, byte **pic, int *width, int *height)
 	 */
 
 	*pic = NULL;
-
-	if(width)
-	{
-		*width = 0;
-	}
-
-	if(height)
-	{
-		*height = 0;
-	}
+	*numTexLevels = 0;
 
 	/*
 	 *  Read the file.
@@ -2398,14 +2401,22 @@ void R_LoadPNG(const char *name, byte **pic, int *width, int *height)
 	 *  Allocate output buffer.
 	 */
 
-	OutBuffer = ri.Malloc(IHDR_Width * IHDR_Height * Q3IMAGE_BYTESPERPIXEL); 
-	if(!OutBuffer)
+	*pic = (textureLevel_t *)ri.Malloc( sizeof(textureLevel_t) + IHDR_Width * IHDR_Height * Q3IMAGE_BYTESPERPIXEL );
+
+	if(!(*pic))
 	{
 		ri.Free(DecompressedData); 
 		CloseBufferedFile(ThePNG);
 
 		return;  
 	}
+
+	(*pic)->format = GL_RGBA8;
+	(*pic)->width = IHDR_Width;
+	(*pic)->height = IHDR_Height;
+	(*pic)->size = IHDR_Width * IHDR_Height * Q3IMAGE_BYTESPERPIXEL;
+	(*pic)->data = OutBuffer = (byte *)(*pic + 1);
+	*numTexLevels = 1;
 
 	/*
 	 *  Interlaced and Non-interlaced images need to be handled differently.
@@ -2452,26 +2463,6 @@ void R_LoadPNG(const char *name, byte **pic, int *width, int *height)
 	}
 
 	/*
-	 *  update the pointer to the image data
-	 */
-
-	*pic = OutBuffer;
-
-	/*
-	 *  Fill width and height.
-	 */
-
-	if(width)
-	{
-		*width = IHDR_Width;
-	}
-
-	if(height)
-	{
-		*height = IHDR_Height;
-	}
-
-	/*
 	 *  DecompressedData is not needed anymore.
 	 */
 
@@ -2482,4 +2473,301 @@ void R_LoadPNG(const char *name, byte **pic, int *width, int *height)
 	 */
 
 	CloseBufferedFile(ThePNG);
+}
+
+/*
+ * Encode a non-interlaced 8-bit true color image
+ */
+
+static qboolean EncodeImageNonInterlaced8True(uint32_t IHDR_Width, uint32_t IHDR_Height,
+		byte                  *InBuffer,
+		uint32_t			  InBytesPerPixel,
+		uint32_t			  Padding,
+		uint8_t               *ImageData)
+{
+	uint32_t BytesPerScanline, BytesPerPixel, PixelsPerByte;
+	uint32_t  w, h;
+	byte *InPtr;
+	uint8_t *OutPtr;
+
+	/*
+	 *  input verification
+	 */
+
+	if(!InBuffer)
+	{
+		return(qfalse);
+	}
+
+	/*
+	 *  information for un-filtering
+	 *  PNG_ColourType_True, PNG_BitDepth_8
+	 */
+
+	BytesPerPixel    = PNG_NumColourComponents_True;
+	PixelsPerByte    = 1;
+
+	/*
+	 *  Calculate the size of one scanline
+	 */
+
+	BytesPerScanline = (IHDR_Width * BytesPerPixel + (PixelsPerByte - 1)) / PixelsPerByte;
+
+	/*
+	 *  Set the working pointers to the beginning of the buffers.
+	 */
+
+	InPtr = InBuffer;
+	OutPtr = ImageData;
+
+	/*
+	 *  Create the output image.
+	 */
+
+	for(h = IHDR_Height; h > 0; h--)
+	{
+		InPtr = InBuffer + (BytesPerScanline + Padding) * (h - 1);
+
+		/*
+		 *  set FilterType
+		 */
+
+		OutPtr[0] = PNG_FilterType_None;
+		OutPtr++;
+
+		for(w = 0; w < (BytesPerScanline / BytesPerPixel); w++)
+		{
+			OutPtr[0] = InPtr[0];
+			OutPtr[1] = InPtr[1];
+			OutPtr[2] = InPtr[2];
+
+			InPtr += InBytesPerPixel;
+			OutPtr += BytesPerPixel;
+		}
+	}
+
+	return(qtrue);
+}
+
+/*
+ * Write data to buffer.
+ */
+
+void WriteToBuffer(void **buffer, const void *data, size_t length)
+{
+	memcpy(*buffer, data, length);
+	*(byte**)buffer += length;
+}
+
+/*
+ * Write PNG chuck header to buffer.
+ */
+
+void WriteChunkHeader(void **buffer, void **crcPtr, PNG_ChunkCRC *CRC, int type, int length)
+{
+	struct PNG_ChunkHeader	CH;
+
+	/*
+	 *  Write chuck header
+	 */
+
+	CH.Type = BigLong(type);
+	CH.Length = BigLong(length);
+
+	WriteToBuffer(buffer, &CH, PNG_ChunkHeader_Size);
+
+	/*
+	 *  Init CRC
+	 */
+
+	*CRC = ri.zlib_crc32(0, Z_NULL, 0);
+	*CRC = ri.zlib_crc32(*CRC, *(byte**)buffer-4, 4);
+	*crcPtr = *buffer;
+}
+
+/*
+ * Write CRC to buffer.
+ */
+
+void WriteCRC(void **buffer, void **crcPtr, PNG_ChunkCRC CRC)
+{
+	int size = (intptr_t)*buffer-(intptr_t)*crcPtr;
+
+	/*
+	 *  Update CRC
+	 */
+	if (size > 0)
+		CRC = ri.zlib_crc32(CRC, *crcPtr, size);
+
+	/*
+	 *  Write CRC
+	 */
+	CRC = BigLong(CRC);
+	WriteToBuffer(buffer, &CRC, PNG_ChunkCRC_Size);
+}
+
+/*
+ * The PNG saver
+ */
+
+void RE_SavePNG(const char *filename, int width, int height, byte *data, int padding) {
+	void					*pngData;
+	size_t					pngSize;
+	void					*buffer;
+	struct PNG_Chunk_IHDR	IHDR;
+	PNG_ChunkCRC			CRC;
+	void					*crcPtr;
+	int						numtEXt = 0;
+	#define					NUMTEXT 5+MAX_SPLITVIEW*2
+	struct
+	{
+		char key[80]; // PNG limits to 79+'\0'.
+		char text[256]; // PNG allows any length.
+	} tEXt[NUMTEXT];
+	int						i;
+	uint8_t					*imageData;
+	uint32_t				imageLength;
+	Bytef					*compressedData = NULL;
+	uLongf					compressedDataLength;
+
+	/*
+	 *  Create the png image data from buffer.
+	 */
+
+	imageLength = (width*PNG_NumColourComponents_True + 1) * height;
+	imageData = ri.Malloc(imageLength);
+
+	EncodeImageNonInterlaced8True(width, height, data, 3, padding, imageData);
+
+	/*
+	 *  Compress the png image data.
+	 */
+
+	compressedDataLength = imageLength * 1.01f + 12;
+	compressedData = ri.Malloc(compressedDataLength);
+
+	if (ri.zlib_compress(compressedData, &compressedDataLength, imageData, imageLength) != Z_OK) {
+		ri.Free(compressedData);
+		ri.Free(imageData);
+		ri.Printf(PRINT_WARNING, "RE_SavePNG: Failed to compress image data.\n");
+		return;
+	}
+
+	/*
+	 *  Setup text data.
+	 */
+
+	Q_strncpyz(tEXt[numtEXt].key, "Title", sizeof (tEXt[numtEXt].key));
+	ri.Cvar_VariableStringBuffer("version", tEXt[numtEXt].text, sizeof (tEXt[numtEXt].text));
+	numtEXt++;
+	//Q_strncpyz(tEXt[numtEXt].key, "Author", sizeof (tEXt[numtEXt].key));
+	//ri.Cvar_VariableStringBuffer("username", tEXt[numtEXt].text, sizeof (tEXt[numtEXt].text));
+	//numtEXt++;
+	Q_strncpyz(tEXt[numtEXt].key, "Description", sizeof (tEXt[numtEXt].key));
+	ri.Cvar_VariableStringBuffer("com_productName", tEXt[numtEXt].text, sizeof (tEXt[numtEXt].text));
+	numtEXt++;
+	Q_strncpyz(tEXt[numtEXt].key, "Mapname", sizeof (tEXt[numtEXt].key));
+	ri.Cvar_VariableStringBuffer("mapname", tEXt[numtEXt].text, sizeof (tEXt[numtEXt].text));
+	numtEXt++;
+	Q_strncpyz(tEXt[numtEXt].key, "Maptitle", sizeof (tEXt[numtEXt].key));
+	ri.CL_GetMapTitle(tEXt[numtEXt].text, sizeof (tEXt[numtEXt].text));
+	numtEXt++;
+	for (i = 0; i < ri.CL_MaxSplitView(); i++) {
+		Com_sprintf(tEXt[numtEXt].key, sizeof (tEXt[numtEXt].key), "Playername%d", i+1);
+		ri.Cvar_VariableStringBuffer(Com_LocalPlayerCvarName(i, "name"), tEXt[numtEXt].text, sizeof (tEXt[numtEXt].text));
+		numtEXt++;
+
+		if (ri.CL_GetLocalPlayerLocation(tEXt[numtEXt].text, sizeof (tEXt[numtEXt].text), i)) {
+			Com_sprintf(tEXt[numtEXt].key, sizeof (tEXt[numtEXt].key), "Location%d", i+1);
+			numtEXt++;
+		}
+	}
+
+
+	/*
+	 *  Calculate the size of the image.
+	 */
+
+	pngSize = PNG_Signature_Size + PNG_ChunkHeader_Size + PNG_Chunk_IHDR_Size + PNG_ChunkCRC_Size;
+
+	/*
+	 *  Calculate the length of the tEXt chunks.
+	 */
+
+	for (i = 0; i < numtEXt; i++) {
+		pngSize += PNG_ChunkHeader_Size + strlen(tEXt[i].key)+1 + strlen(tEXt[i].text) + PNG_ChunkCRC_Size;
+	}
+
+	pngSize += PNG_ChunkHeader_Size + compressedDataLength + PNG_ChunkCRC_Size
+			+ PNG_ChunkHeader_Size + PNG_ChunkCRC_Size;
+
+	/*
+	 *  Allocate memory to hold the full png image data.
+	 */
+
+	buffer = pngData = ri.Hunk_AllocateTempMemory(pngSize);
+
+	/*
+	 *  Setup CRC.
+	 */
+
+	CRC = ri.zlib_crc32(0, Z_NULL, 0);
+	crcPtr = (byte*)buffer + PNG_Signature_Size + 4;
+
+	/*
+	 *  Header
+	 */
+
+	WriteToBuffer(&buffer, PNG_Signature, PNG_Signature_Size);
+
+	WriteChunkHeader(&buffer, &crcPtr, &CRC, PNG_ChunkType_IHDR, PNG_Chunk_IHDR_Size);
+	IHDR.Width = BigLong(width);
+	IHDR.Height = BigLong(height);
+	IHDR.BitDepth = PNG_BitDepth_8;
+	IHDR.ColourType = PNG_ColourType_True;
+	IHDR.CompressionMethod = PNG_CompressionMethod_0;
+	IHDR.FilterMethod = PNG_FilterMethod_0;
+	IHDR.InterlaceMethod = PNG_InterlaceMethod_NonInterlaced;
+	WriteToBuffer(&buffer, &IHDR, PNG_Chunk_IHDR_Size);
+	WriteCRC(&buffer, &crcPtr, CRC);
+
+	/*
+	 *  tEXt, Textual data.
+	 */
+	for (i = 0; i < numtEXt; i++) {
+		WriteChunkHeader(&buffer, &crcPtr, &CRC, PNG_ChunkType_tEXt, strlen(tEXt[i].key)+1 + strlen(tEXt[i].text));
+
+		/*
+		 *  Write string data.
+		 */
+		WriteToBuffer(&buffer, tEXt[i].key, strlen(tEXt[i].key)+1);
+		WriteToBuffer(&buffer, tEXt[i].text, strlen(tEXt[i].text));
+
+		WriteCRC(&buffer, &crcPtr, CRC);
+	}
+
+	/*
+	 *  IDAT, Image Data.
+	 */
+	WriteChunkHeader(&buffer, &crcPtr, &CRC, PNG_ChunkType_IDAT, compressedDataLength);
+	WriteToBuffer(&buffer, compressedData, compressedDataLength);
+	WriteCRC(&buffer, &crcPtr, CRC);
+
+	/*
+	 *  IEND, Image End.
+	 */
+	WriteChunkHeader(&buffer, &crcPtr, &CRC, PNG_ChunkType_IEND, 0);
+	WriteCRC(&buffer, &crcPtr, CRC);
+
+	/*
+	 *  Write the image to file.
+	 */
+	ri.FS_WriteFile(filename, pngData, pngSize);
+
+	/*
+	 *  Free memory.
+	 */
+	ri.Hunk_FreeTempMemory(pngData);
+	ri.Free(compressedData);
+	ri.Free(imageData);
 }

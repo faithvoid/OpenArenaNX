@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 
@@ -38,6 +46,7 @@ cvar_t	*sv_rconPassword;		// password for remote server commands
 cvar_t	*sv_privatePassword;		// password for the privateClient slots
 cvar_t	*sv_allowDownload;
 cvar_t	*sv_maxclients;
+cvar_t	*sv_cheats;
 
 cvar_t	*sv_privateClients;		// number of clients reserved for password
 cvar_t	*sv_hostname;
@@ -54,14 +63,14 @@ cvar_t	*sv_maxRate;
 cvar_t	*sv_dlRate;
 cvar_t	*sv_minPing;
 cvar_t	*sv_maxPing;
-cvar_t	*sv_gametype;
+cvar_t	*sv_gametypeName;
+cvar_t	*sv_gametypeNetName;
 cvar_t	*sv_pure;
 cvar_t	*sv_floodProtect;
 cvar_t	*sv_lanForceRate; // dedicated 1 (LAN) server forces local client rates to 99999 (bug #491)
-#ifndef STANDALONE
-cvar_t	*sv_strictAuth;
-#endif
 cvar_t	*sv_banFile;
+
+cvar_t  *sv_public;
 
 serverBan_t serverBans[SERVER_MAXBANS];
 int serverBansCount = 0;
@@ -140,7 +149,7 @@ The given command will be transmitted to the client, and is guaranteed to
 not have future snapshot_t executed before it is executed
 ======================
 */
-void SV_AddServerCommand( client_t *client, const char *cmd ) {
+void SV_AddServerCommand( client_t *client, int localPlayerNum, const char *cmd ) {
 	int		index, i;
 
 	// this is very ugly but it's also a waste to for instance send multiple config string updates
@@ -163,12 +172,23 @@ void SV_AddServerCommand( client_t *client, const char *cmd ) {
 		for ( i = client->reliableAcknowledge + 1 ; i <= client->reliableSequence ; i++ ) {
 			Com_Printf( "cmd %5d: %s\n", i, client->reliableCommands[ i & (MAX_RELIABLE_COMMANDS-1) ] );
 		}
-		Com_Printf( "cmd %5d: %s\n", i, cmd );
+
+		if ( client->netchan.remoteAddress.type != NA_BOT && localPlayerNum >= 0 && localPlayerNum < MAX_SPLITVIEW ) {
+			Com_Printf( "cmd %5d: lc%d %s\n", i, localPlayerNum, cmd );
+		} else {
+			Com_Printf( "cmd %5d: %s\n", i, cmd );
+		}
+
 		SV_DropClient( client, "Server command overflow" );
 		return;
 	}
 	index = client->reliableSequence & ( MAX_RELIABLE_COMMANDS - 1 );
-	Q_strncpyz( client->reliableCommands[ index ], cmd, sizeof( client->reliableCommands[ index ] ) );
+
+	if ( client->netchan.remoteAddress.type != NA_BOT && localPlayerNum >= 0 && localPlayerNum < MAX_SPLITVIEW ) {
+		Com_sprintf( client->reliableCommands[ index ], sizeof( client->reliableCommands[ index ] ), "lc%d %s", localPlayerNum, cmd );
+	} else {
+		Q_strncpyz( client->reliableCommands[ index ], cmd, sizeof( client->reliableCommands[ index ] ) );
+	}
 }
 
 
@@ -181,7 +201,7 @@ the client game module: "cp", "print", "chat", etc
 A NULL client will broadcast to all clients
 =================
 */
-void QDECL SV_SendServerCommand(client_t *cl, const char *fmt, ...) {
+void QDECL SV_SendServerCommand(client_t *cl, int localPlayerNum, const char *fmt, ...) {
 	va_list		argptr;
 	byte		message[MAX_MSGLEN];
 	client_t	*client;
@@ -191,27 +211,25 @@ void QDECL SV_SendServerCommand(client_t *cl, const char *fmt, ...) {
 	Q_vsnprintf ((char *)message, sizeof(message), fmt,argptr);
 	va_end (argptr);
 
-	// Fix to http://aluigi.altervista.org/adv/q3msgboom-adv.txt
-	// The actual cause of the bug is probably further downstream
-	// and should maybe be addressed later, but this certainly
-	// fixes the problem for now
-	if ( strlen ((char *)message) > 1022 ) {
+	// reserve 4 bytes for splitscreen prefix: "lc%d "
+	if ( strlen ((char *)message) >= sizeof( ((client_t*)NULL)->reliableCommands[0] ) - 4 ) {
+		Com_Printf( S_COLOR_YELLOW "WARNING: Dropped long reliable command for client %d: %s\n", (int)( cl - svs.clients ), message );
 		return;
 	}
 
 	if ( cl != NULL ) {
-		SV_AddServerCommand( cl, (char *)message );
+		SV_AddServerCommand( cl, localPlayerNum, (char *)message );
 		return;
 	}
 
 	// hack to echo broadcast prints to console
-	if ( com_dedicated->integer && !strncmp( (char *)message, "print", 5) ) {
+	if ( com_dedicated->integer && !strncmp( (char *)message, "print", 5 ) ) {
 		Com_Printf ("broadcast: %s\n", SV_ExpandNewlines((char *)message) );
 	}
 
 	// send the data to all relevant clients
 	for (j = 0, client = svs.clients; j < sv_maxclients->integer ; j++, client++) {
-		SV_AddServerCommand( client, (char *)message );
+		SV_AddServerCommand( client, -1, (char *)message );
 	}
 }
 
@@ -237,25 +255,26 @@ but not on every player enter or exit.
 */
 #define	HEARTBEAT_MSEC	300*1000
 #define	MASTERDNS_MSEC	24*60*60*1000
+static netadr_t	adr[MAX_MASTER_SERVERS][2]; // [2] for v4 and v6 address for the same address string.
 void SV_MasterHeartbeat(const char *message)
 {
-	static netadr_t	adr[MAX_MASTER_SERVERS][2]; // [2] for v4 and v6 address for the same address string.
 	int			i;
 	int			res;
 	int			netenabled;
 
+	// Do not send heartbeats in single player.
+	if ( Com_GameIsSinglePlayer() ) {
+		return;
+	}
+
 	netenabled = Cvar_VariableIntegerValue("net_enabled");
 
-	// "dedicated 1" is for lan play, "dedicated 2" is for inet public play
-	if (!com_dedicated || com_dedicated->integer != 2 || !(netenabled & (NET_ENABLEV4 | NET_ENABLEV6)))
-		return;		// only dedicated servers send heartbeats
+	if (!(netenabled & (NET_ENABLEV4 | NET_ENABLEV6)))
+		return;		// only public servers send heartbeats
 
 	// if not time yet, don't send anything
 	if ( svs.time < svs.nextHeartbeatTime )
 		return;
-
-	if ( !Q_stricmp( com_gamename->string, LEGACY_MASTER_GAMENAME ) )
-		message = LEGACY_HEARTBEAT_FOR_MASTER;
 
 	svs.nextHeartbeatTime = svs.time + HEARTBEAT_MSEC;
 
@@ -313,7 +332,7 @@ void SV_MasterHeartbeat(const char *message)
 		}
 
 
-		Com_Printf ("Sending heartbeat to %s\n", sv_master[i]->string );
+		Com_DPrintf("Sending heartbeat to %s\n", sv_master[i]->string);
 
 		// this command should be changed if the server info / status format
 		// ever incompatably changes
@@ -327,19 +346,58 @@ void SV_MasterHeartbeat(const char *message)
 
 /*
 =================
+SV_CheckPublicStatus
+
+Checks for change of public status, informs all masters that
+this server is going down or forces normal heartbeat if needed.
+=================
+*/
+void SV_CheckPublicStatus(void) {
+	static int publicOld = 0;
+
+	// Check if public status changed.
+	if (sv_public->modified) {
+		// Check if switched to or from public.
+		if (sv_public->integer > 0 || publicOld > 0) {
+			// Send heartbeat
+			if (sv_public->integer != 1) {
+				// Send shutdown server heartbeats
+				svs.nextHeartbeatTime = -9999;
+				SV_MasterHeartbeat(FLATLINE_FOR_MASTER);
+				svs.nextHeartbeatTime = -9999;
+				SV_MasterHeartbeat(FLATLINE_FOR_MASTER);
+			} else {
+				svs.nextHeartbeatTime = -9999;
+				// SV_MasterHeartbeat will be called as usual.
+			}
+		}
+
+		sv_public->modified = qfalse;
+	}
+
+	publicOld = sv_public->integer;
+}
+
+/*
+=================
 SV_MasterShutdown
 
 Informs all masters that this server is going down
 =================
 */
 void SV_MasterShutdown( void ) {
+	// "sv_public 1" is for internet public play
+	if (!sv_public || sv_public->integer != 1) {
+		return;
+	}
+
 	// send a heartbeat right now
 	svs.nextHeartbeatTime = -9999;
-	SV_MasterHeartbeat(HEARTBEAT_FOR_MASTER);
+	SV_MasterHeartbeat(FLATLINE_FOR_MASTER);
 
 	// send it again to minimize chance of drops
 	svs.nextHeartbeatTime = -9999;
-	SV_MasterHeartbeat(HEARTBEAT_FOR_MASTER);
+	SV_MasterHeartbeat(FLATLINE_FOR_MASTER);
 
 	// when the master tries to poll the server, it won't respond, so
 	// it will be removed from the list
@@ -529,13 +587,19 @@ static void SVC_Status( netadr_t from ) {
 	char	status[MAX_MSGLEN];
 	int		i;
 	client_t	*cl;
-	playerState_t	*ps;
+	player_t	*pl;
+	sharedPlayerState_t	*ps;
 	int		statusLength;
 	int		playerLength;
 	char	infostring[MAX_INFO_STRING];
 
+	// Don't reply if sv_public is -1 or lower
+	if ( sv_public->integer <= -1 ) {
+		return;
+	}
+
 	// ignore if we are in single player
-	if ( Cvar_VariableValue( "g_gametype" ) == GT_SINGLE_PLAYER || Cvar_VariableValue("ui_singlePlayerActive")) {
+	if ( Com_GameIsSinglePlayer() ) {
 		return;
 	}
 
@@ -567,11 +631,14 @@ static void SVC_Status( netadr_t from ) {
 	statusLength = 0;
 
 	for (i=0 ; i < sv_maxclients->integer ; i++) {
-		cl = &svs.clients[i];
+		pl = &svs.players[i];
+		if (!pl->inUse)
+			continue;
+		cl = pl->client;
 		if ( cl->state >= CS_CONNECTED ) {
-			ps = SV_GameClientNum( i );
+			ps = SV_GamePlayerNum( i );
 			Com_sprintf (player, sizeof(player), "%i %i \"%s\"\n", 
-				ps->persistant[PERS_SCORE], cl->ping, cl->name);
+				ps->score, cl->ping, pl->name);
 			playerLength = strlen(player);
 			if (statusLength + playerLength >= sizeof(status) ) {
 				break;		// can't hold any more
@@ -597,8 +664,13 @@ void SVC_Info( netadr_t from ) {
 	char	*gamedir;
 	char	infostring[MAX_INFO_STRING];
 
+	// Don't reply if sv_public is -1 or lower
+	if ( sv_public->integer <= -1 ) {
+		return;
+	}
+
 	// ignore if we are in single player
-	if ( Cvar_VariableValue( "g_gametype" ) == GT_SINGLE_PLAYER || Cvar_VariableValue("ui_singlePlayerActive")) {
+	if ( Com_GameIsSinglePlayer() ) {
 		return;
 	}
 
@@ -616,6 +688,22 @@ void SVC_Info( netadr_t from ) {
 		return;
 	}
 
+	// If not a public server and request is from a master server, don't reply.
+	if ( sv_public->integer != 1 ) {
+		// NOTE: the addresses will only have been resolved if sent a heartbeat
+		for (i = 0; i < MAX_MASTER_SERVERS; i++) {
+			if(!sv_master[i]->string[0])
+				continue;
+
+			for (count = 0; count < 2; count++) {
+				// From one of the master servers, server is not public so ignore it.
+				if ( NET_CompareAdr( from, adr[i][count] ) ) {
+					return;
+				}
+			}
+		}
+	}
+
 	/*
 	 * Check whether Cmd_Argv(1) has a sane length. This was not done in the original Quake3 version which led
 	 * to the Infostring bug discovered by Luigi Auriemma. See http://aluigi.altervista.org/ for the advisory.
@@ -629,9 +717,9 @@ void SVC_Info( netadr_t from ) {
 	count = humans = 0;
 	for ( i = sv_privateClients->integer ; i < sv_maxclients->integer ; i++ ) {
 		if ( svs.clients[i].state >= CS_CONNECTED ) {
-			count++;
+			count += SV_ClientNumLocalPlayers( &svs.clients[i] );
 			if (svs.clients[i].netchan.remoteAddress.type != NA_BOT) {
-				humans++;
+				humans += SV_ClientNumLocalPlayers( &svs.clients[i] );
 			}
 		}
 	}
@@ -657,9 +745,13 @@ void SVC_Info( netadr_t from ) {
 	Info_SetValueForKey(infostring, "g_humanplayers", va("%i", humans));
 	Info_SetValueForKey( infostring, "sv_maxclients", 
 		va("%i", sv_maxclients->integer - sv_privateClients->integer ) );
-	Info_SetValueForKey( infostring, "gametype", va("%i", sv_gametype->integer ) );
+	Info_SetValueForKey( infostring, "gametype", sv_gametypeNetName->string );
 	Info_SetValueForKey( infostring, "pure", va("%i", sv_pure->integer ) );
 	Info_SetValueForKey(infostring, "g_needpass", va("%d", Cvar_VariableIntegerValue("g_needpass")));
+
+	if (sv_cheats->integer) {
+		Info_SetValueForKey( infostring, "cheats", va("%i", sv_cheats->integer ) );
+	}
 
 #ifdef USE_VOIP
 	if (sv_voipProtocol->string && *sv_voipProtocol->string) {
@@ -801,10 +893,6 @@ static void SV_ConnectionlessPacket( netadr_t from, msg_t *msg ) {
 		SV_GetChallenge(from);
 	} else if (!Q_stricmp(c, "connect")) {
 		SV_DirectConnect( from );
-#ifndef STANDALONE
-	} else if (!Q_stricmp(c, "ipAuthorize")) {
-		SV_AuthorizeIpPacket( from );
-#endif
 	} else if (!Q_stricmp(c, "rcon")) {
 		SVC_RemoteCommand( from, msg );
 	} else if (!Q_stricmp(c, "disconnect")) {
@@ -890,19 +978,16 @@ static void SV_CalcPings( void ) {
 	client_t	*cl;
 	int			total, count;
 	int			delta;
-	playerState_t	*ps;
+	sharedPlayerState_t	*ps;
 
 	for (i=0 ; i < sv_maxclients->integer ; i++) {
 		cl = &svs.clients[i];
+
 		if ( cl->state != CS_ACTIVE ) {
 			cl->ping = 999;
 			continue;
 		}
-		if ( !cl->gentity ) {
-			cl->ping = 999;
-			continue;
-		}
-		if ( cl->gentity->r.svFlags & SVF_BOT ) {
+		if ( cl->netchan.remoteAddress.type == NA_BOT ) {
 			cl->ping = 0;
 			continue;
 		}
@@ -927,8 +1012,14 @@ static void SV_CalcPings( void ) {
 		}
 
 		// let the game dll know about the ping
-		ps = SV_GameClientNum( i );
-		ps->ping = cl->ping;
+		for ( j = 0 ; j < MAX_SPLITVIEW ; j++ ) {
+			if ( !cl->localPlayers[j] ) {
+				continue;
+			}
+
+			ps = SV_GamePlayerNum( cl->localPlayers[j] - svs.players );
+			ps->ping = cl->ping;
+		}
 	}
 }
 
@@ -964,7 +1055,7 @@ static void SV_CheckTimeouts( void ) {
 		&& cl->lastPacketTime < zombiepoint) {
 			// using the client id cause the cl->name is empty at this point
 			Com_DPrintf( "Going from CS_ZOMBIE to CS_FREE for client %d\n", i );
-			cl->state = CS_FREE;	// can now be reused
+			SV_FreeClient( cl );	// can now be reused
 			continue;
 		}
 		if ( cl->state >= CS_CONNECTED && cl->lastPacketTime < droppoint) {
@@ -972,7 +1063,7 @@ static void SV_CheckTimeouts( void ) {
 			// cause a timeout
 			if ( ++cl->timeoutCount > 5 ) {
 				SV_DropClient (cl, "timed out"); 
-				cl->state = CS_FREE;	// don't bother with zombie state
+				SV_FreeClient( cl );	// don't bother with zombie state
 			}
 		} else {
 			cl->timeoutCount = 0;
@@ -1107,8 +1198,7 @@ void SV_Frame( int msec ) {
 	}
 
 	if( sv.restartTime && sv.time >= sv.restartTime ) {
-		sv.restartTime = 0;
-		Cbuf_AddText( "map_restart 0\n" );
+		Cbuf_AddText( "map_restart\n" );
 		return;
 	}
 
@@ -1154,6 +1244,12 @@ void SV_Frame( int msec ) {
 	SV_SendClientMessages();
 
 	// send a heartbeat to the master if needed
+	SV_CheckPublicStatus();
+
+	// "sv_public 1" is for internet public play
+	if (sv_public->integer != 1) {
+		return;
+	}
 	SV_MasterHeartbeat(HEARTBEAT_FOR_MASTER);
 }
 

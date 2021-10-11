@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 
@@ -52,16 +60,27 @@ cvar_t *r_allowSoftwareGL; // Don't abort out if a hardware visual can't be obta
 cvar_t *r_allowResize; // make window resizable
 cvar_t *r_centerWindow;
 cvar_t *r_sdlDriver;
+cvar_t *r_forceWindowIcon32;
 
 int qglMajorVersion, qglMinorVersion;
 int qglesMajorVersion, qglesMinorVersion;
 
+// GL_ARB_multisample
 void (APIENTRYP qglActiveTextureARB) (GLenum texture);
 void (APIENTRYP qglClientActiveTextureARB) (GLenum texture);
 void (APIENTRYP qglMultiTexCoord2fARB) (GLenum target, GLfloat s, GLfloat t);
 
+// GL_EXT_compiled_vertex_array
 void (APIENTRYP qglLockArraysEXT) (GLint first, GLsizei count);
 void (APIENTRYP qglUnlockArraysEXT) (void);
+
+// GL_ARB_texture_compression
+void (APIENTRYP qglCompressedTexImage2DARB) (GLenum target, GLint level,
+						GLenum internalformat,
+						GLsizei width, GLsizei height,
+						GLint border, GLsizei imageSize,
+						const GLvoid *data);
+
 
 #define GLE(ret, name, ...) name##proc * qgl##name;
 QGL_1_1_PROCS;
@@ -128,8 +147,8 @@ static int GLimp_CompareModes( const void *a, const void *b )
 	float aspectB = (float)modeB->w / (float)modeB->h;
 	int areaA = modeA->w * modeA->h;
 	int areaB = modeB->w * modeB->h;
-	float aspectDiffA = fabs( aspectA - displayAspect );
-	float aspectDiffB = fabs( aspectB - displayAspect );
+	float aspectDiffA = fabs( aspectA - glConfig.displayAspect );
+	float aspectDiffB = fabs( aspectB - glConfig.displayAspect );
 	float aspectDiffsDiff = aspectDiffA - aspectDiffB;
 
 	if( aspectDiffsDiff > ASPECT_EPSILON )
@@ -261,7 +280,7 @@ static qboolean GLimp_GetProcAddresses( qboolean fixedFunction ) {
 	version = (const char *)qglGetString( GL_VERSION );
 
 	if ( !version ) {
-		Com_Error( ERR_FATAL, "GL_VERSION is NULL" );
+		Com_Error( ERR_FATAL, "GL_VERSION is NULL\n" );
 	}
 
 	if ( Q_stricmpn( "OpenGL ES", version, 9 ) == 0 ) {
@@ -277,7 +296,7 @@ static qboolean GLimp_GetProcAddresses( qboolean fixedFunction ) {
 	}
 
 	if ( fixedFunction ) {
-		if ( QGL_VERSION_ATLEAST( 1, 1 ) ) {
+		if ( QGL_VERSION_ATLEAST( 1, 2 ) ) {
 			QGL_1_1_PROCS;
 			QGL_1_1_FIXED_FUNCTION_PROCS;
 			QGL_DESKTOP_1_1_PROCS;
@@ -289,9 +308,9 @@ static qboolean GLimp_GetProcAddresses( qboolean fixedFunction ) {
 			QGL_ES_1_1_PROCS;
 			QGL_ES_1_1_FIXED_FUNCTION_PROCS;
 			// error so this doesn't segfault due to NULL desktop GL functions being used
-			Com_Error( ERR_FATAL, "Unsupported OpenGL Version: %s", version );
+			Com_Error( ERR_FATAL, "Unsupported OpenGL Version: %s\n", version );
 		} else {
-			Com_Error( ERR_FATAL, "Unsupported OpenGL Version (%s), OpenGL 1.1 is required", version );
+			Com_Error( ERR_FATAL, "Unsupported OpenGL Version (%s), OpenGL 1.2 is required\n", version );
 		}
 	} else {
 		if ( QGL_VERSION_ATLEAST( 2, 0 ) ) {
@@ -307,9 +326,9 @@ static qboolean GLimp_GetProcAddresses( qboolean fixedFunction ) {
 			QGL_1_5_PROCS;
 			QGL_2_0_PROCS;
 			// error so this doesn't segfault due to NULL desktop GL functions being used
-			Com_Error( ERR_FATAL, "Unsupported OpenGL Version: %s", version );
+			Com_Error( ERR_FATAL, "Unsupported OpenGL Version: %s\n", version );
 		} else {
-			Com_Error( ERR_FATAL, "Unsupported OpenGL Version (%s), OpenGL 2.0 is required", version );
+			Com_Error( ERR_FATAL, "Unsupported OpenGL Version (%s), OpenGL 2.0 is required\n", version );
 		}
 	}
 
@@ -379,19 +398,59 @@ static int GLimp_SetMode(int mode, qboolean fullscreen, qboolean noborder, qbool
 	SDL_DisplayMode desktopMode;
 	int display = 0;
 	int x = SDL_WINDOWPOS_UNDEFINED, y = SDL_WINDOWPOS_UNDEFINED;
+	char windowTitle[128];
+	textureLevel_t *iconPic;
+	byte *pixelData;
+	int bytesPerPixel, width, height;
 
 	ri.Printf( PRINT_ALL, "Initializing OpenGL display\n");
+
+	ri.Cvar_VariableStringBuffer("com_productName", windowTitle, sizeof (windowTitle));
 
 	if ( r_allowResize->integer )
 		flags |= SDL_WINDOW_RESIZABLE;
 
+	iconPic = NULL;
+	pixelData = NULL;
+	bytesPerPixel = 4;
+
 #ifdef USE_ICON
+	// try to load 32 x 32 icon
+	if ( r_forceWindowIcon32->integer ) {
+		int numLevels;
+
+		R_LoadImage( "windowicon32", &numLevels, &iconPic );
+
+		if ( iconPic && ( iconPic[0].width != 32 || iconPic[0].height != 32 ) ) {
+			ri.Free( iconPic );
+			iconPic = NULL;
+			ri.Printf( PRINT_WARNING, "Ignoring windowicon32: Image must be 32 x 32!\n");
+		}
+	} else {
+		int numLevels;
+
+		// try to load high resolution icon
+		R_LoadImage( "windowicon", &numLevels, &iconPic );
+	}
+
+	if ( iconPic ) {
+		pixelData = iconPic[0].data;
+		width = iconPic[0].width;
+		height = iconPic[0].height;
+	} else {
+		// fallback to default icon
+		pixelData = (byte *)CLIENT_WINDOW_ICON.pixel_data;
+		bytesPerPixel = CLIENT_WINDOW_ICON.bytes_per_pixel;
+		width = CLIENT_WINDOW_ICON.width;
+		height = CLIENT_WINDOW_ICON.height;
+	}
+
 	icon = SDL_CreateRGBSurfaceFrom(
-			(void *)CLIENT_WINDOW_ICON.pixel_data,
-			CLIENT_WINDOW_ICON.width,
-			CLIENT_WINDOW_ICON.height,
-			CLIENT_WINDOW_ICON.bytes_per_pixel * 8,
-			CLIENT_WINDOW_ICON.bytes_per_pixel * CLIENT_WINDOW_ICON.width,
+			(void *)pixelData,
+			width,
+			height,
+			bytesPerPixel * 8,
+			bytesPerPixel * width,
 #ifdef Q3_LITTLE_ENDIAN
 			0x000000FF, 0x0000FF00, 0x00FF0000, 0xFF000000
 #else
@@ -412,13 +471,19 @@ static int GLimp_SetMode(int mode, qboolean fullscreen, qboolean noborder, qbool
 
 	if( display >= 0 && SDL_GetDesktopDisplayMode( display, &desktopMode ) == 0 )
 	{
-		displayAspect = (float)desktopMode.w / (float)desktopMode.h;
+		glConfig.displayWidth = desktopMode.w;
+		glConfig.displayHeight = desktopMode.h;
+		glConfig.displayAspect = (float)desktopMode.w / (float)desktopMode.h;
 
-		ri.Printf( PRINT_ALL, "Display aspect: %.3f\n", displayAspect );
+		ri.Printf( PRINT_ALL, "Display aspect: %.3f\n", glConfig.displayAspect );
 	}
 	else
 	{
 		Com_Memset( &desktopMode, 0, sizeof( SDL_DisplayMode ) );
+
+		glConfig.displayWidth = 640;
+		glConfig.displayHeight = 480;
+		glConfig.displayAspect = 1.333f;
 
 		ri.Printf( PRINT_ALL,
 				"Cannot determine display aspect, assuming 1.333\n" );
@@ -474,7 +539,6 @@ static int GLimp_SetMode(int mode, qboolean fullscreen, qboolean noborder, qbool
 		SDL_window = NULL;
 	}
 
-#ifndef __SWITCH__
 	if( fullscreen )
 	{
 		flags |= SDL_WINDOW_FULLSCREEN;
@@ -487,9 +551,6 @@ static int GLimp_SetMode(int mode, qboolean fullscreen, qboolean noborder, qbool
 
 		glConfig.isFullscreen = qfalse;
 	}
-#else
-	glConfig.isFullscreen = qfalse;
-#endif
 
 	colorBits = r_colorbits->value;
 	if ((!colorBits) || (colorBits >= 32))
@@ -584,12 +645,6 @@ static int GLimp_SetMode(int mode, qboolean fullscreen, qboolean noborder, qbool
 		SDL_GL_SetAttribute( SDL_GL_MULTISAMPLEBUFFERS, samples ? 1 : 0 );
 		SDL_GL_SetAttribute( SDL_GL_MULTISAMPLESAMPLES, samples );
 
-#ifdef __SWITCH__
-		SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
-		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
-		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-#endif
-
 		if(r_stereoEnabled->integer)
 		{
 			glConfig.stereoEnabled = qtrue;
@@ -609,7 +664,7 @@ static int GLimp_SetMode(int mode, qboolean fullscreen, qboolean noborder, qbool
 			SDL_GL_SetAttribute( SDL_GL_ACCELERATED_VISUAL, 1 );
 #endif
 
-		if( ( SDL_window = SDL_CreateWindow( CLIENT_WINDOW_TITLE, x, y,
+		if( ( SDL_window = SDL_CreateWindow( windowTitle, x, y,
 				glConfig.vidWidth, glConfig.vidHeight, flags ) ) == NULL )
 		{
 			ri.Printf( PRINT_DEVELOPER, "SDL_CreateWindow failed: %s\n", SDL_GetError( ) );
@@ -640,6 +695,9 @@ static int GLimp_SetMode(int mode, qboolean fullscreen, qboolean noborder, qbool
 		}
 
 		SDL_SetWindowIcon( SDL_window, icon );
+
+		// limit window minimum size to 320x200 unless a smaller size was specified
+		SDL_SetWindowMinimumSize( SDL_window, MIN( 320, glConfig.vidWidth ), MIN( 200, glConfig.vidHeight ) );
 
 		if (!fixedFunction)
 		{
@@ -743,6 +801,11 @@ static int GLimp_SetMode(int mode, qboolean fullscreen, qboolean noborder, qbool
 
 	SDL_FreeSurface( icon );
 
+	if ( iconPic ) {
+		ri.Free( iconPic );
+		iconPic = NULL;
+	}
+
 	if( !SDL_window )
 	{
 		ri.Printf( PRINT_ALL, "Couldn't get a visual\n" );
@@ -806,6 +869,22 @@ static qboolean GLimp_StartDriverAndSetMode(int mode, qboolean fullscreen, qbool
 	return qtrue;
 }
 
+/*
+===============
+GLimp_ResizeWindow
+
+Window has been resized, update glconfig
+===============
+*/
+qboolean GLimp_ResizeWindow( int width, int height )
+{
+	glConfig.vidWidth = width;
+	glConfig.vidHeight = height;
+	glConfig.windowAspect = (float)glConfig.vidWidth / (float)glConfig.vidHeight;
+
+	ri.CL_GlconfigChanged( &glConfig );
+	return qtrue;
+}
 
 /*
 ===============
@@ -823,11 +902,15 @@ static void GLimp_InitExtensions( qboolean fixedFunction )
 	ri.Printf( PRINT_ALL, "Initializing OpenGL extensions\n" );
 
 	glConfig.textureCompression = TC_NONE;
+	qglCompressedTexImage2DARB = NULL;
 
 	// GL_EXT_texture_compression_s3tc
 	if ( SDL_GL_ExtensionSupported( "GL_ARB_texture_compression" ) &&
 	     SDL_GL_ExtensionSupported( "GL_EXT_texture_compression_s3tc" ) )
 	{
+		// Compressed DDS image uploading requires this
+		qglCompressedTexImage2DARB = SDL_GL_GetProcAddress( "glCompressedTexImage2DARB" );
+
 		if ( r_ext_compressed_textures->value )
 		{
 			glConfig.textureCompression = TC_S3TC_ARB;
@@ -951,19 +1034,19 @@ static void GLimp_InitExtensions( qboolean fixedFunction )
 		}
 	}
 
-	textureFilterAnisotropic = qfalse;
+	glConfig.textureFilterAnisotropic = qfalse;
 	if ( SDL_GL_ExtensionSupported( "GL_EXT_texture_filter_anisotropic" ) )
 	{
 		if ( r_ext_texture_filter_anisotropic->integer ) {
-			qglGetIntegerv( GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, (GLint *)&maxAnisotropy );
-			if ( maxAnisotropy <= 0 ) {
+			qglGetIntegerv( GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, (GLint *)&glConfig.maxAnisotropy );
+			if ( glConfig.maxAnisotropy <= 0 ) {
 				ri.Printf( PRINT_ALL, "...GL_EXT_texture_filter_anisotropic not properly supported!\n" );
-				maxAnisotropy = 0;
+				glConfig.maxAnisotropy = 0;
 			}
 			else
 			{
-				ri.Printf( PRINT_ALL, "...using GL_EXT_texture_filter_anisotropic (max: %i)\n", maxAnisotropy );
-				textureFilterAnisotropic = qtrue;
+				ri.Printf( PRINT_ALL, "...using GL_EXT_texture_filter_anisotropic (max: %i)\n", glConfig.maxAnisotropy );
+				glConfig.textureFilterAnisotropic = qtrue;
 			}
 		}
 		else
@@ -974,17 +1057,6 @@ static void GLimp_InitExtensions( qboolean fixedFunction )
 	else
 	{
 		ri.Printf( PRINT_ALL, "...GL_EXT_texture_filter_anisotropic not found\n" );
-	}
-
-	haveClampToEdge = qfalse;
-	if ( QGL_VERSION_ATLEAST( 1, 2 ) || QGLES_VERSION_ATLEAST( 1, 0 ) || SDL_GL_ExtensionSupported( "GL_SGIS_texture_edge_clamp" ) )
-	{
-		ri.Printf( PRINT_ALL, "...using GL_SGIS_texture_edge_clamp\n" );
-		haveClampToEdge = qtrue;
-	}
-	else
-	{
-		ri.Printf( PRINT_ALL, "...GL_SGIS_texture_edge_clamp not found\n" );
 	}
 }
 
@@ -1004,8 +1076,13 @@ void GLimp_Init( qboolean fixedFunction )
 
 	r_allowSoftwareGL = ri.Cvar_Get( "r_allowSoftwareGL", "0", CVAR_LATCH );
 	r_sdlDriver = ri.Cvar_Get( "r_sdlDriver", "", CVAR_ROM );
-	r_allowResize = ri.Cvar_Get( "r_allowResize", "0", CVAR_ARCHIVE | CVAR_LATCH );
+	r_allowResize = ri.Cvar_Get( "r_allowResize", "1", CVAR_ARCHIVE | CVAR_LATCH );
 	r_centerWindow = ri.Cvar_Get( "r_centerWindow", "0", CVAR_ARCHIVE | CVAR_LATCH );
+#ifdef _WIN32
+	r_forceWindowIcon32 = ri.Cvar_Get( "r_forceWindowIcon32", "1", CVAR_LATCH );
+#else
+	r_forceWindowIcon32 = ri.Cvar_Get( "r_forceWindowIcon32", "0", CVAR_LATCH );
+#endif
 
 	if( ri.Cvar_VariableIntegerValue( "com_abnormalExit" ) )
 	{
@@ -1041,10 +1118,6 @@ void GLimp_Init( qboolean fixedFunction )
 	ri.Error( ERR_FATAL, "GLimp_Init() - could not load OpenGL subsystem" );
 
 success:
-	// These values force the UI to disable driver selection
-	glConfig.driverType = GLDRV_ICD;
-	glConfig.hardwareType = GLHW_GENERIC;
-
 	// Only using SDL_SetWindowBrightness to determine if hardware gamma is supported
 	glConfig.deviceSupportsGamma = !r_ignorehwgamma->integer &&
 		SDL_SetWindowBrightness( SDL_window, 1.0f ) >= 0;
@@ -1137,7 +1210,14 @@ void GLimp_EndFrame( void )
 
 			// SDL_WM_ToggleFullScreen didn't work, so do it the slow way
 			if( !sdlToggled )
+			{
 				ri.Cmd_ExecuteText(EXEC_APPEND, "vid_restart\n");
+			}
+			else
+			{
+				glConfig.isFullscreen = !!r_fullscreen->integer;
+				ri.CL_GlconfigChanged( &glConfig );
+			}
 
 			ri.IN_Restart( );
 		}

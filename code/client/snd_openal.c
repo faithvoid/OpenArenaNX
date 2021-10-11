@@ -1,23 +1,31 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 Copyright (C) 2005 Stuart Dalton (badcdev@gmail.com)
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 
@@ -140,6 +148,8 @@ typedef struct alSfx_s
 	qboolean	isLocked;				// Sound is locked (can not be unloaded)
 	int				lastUsedTime;		// Time last used
 
+	int				duration;				// Milliseconds
+
 	int				loopCnt;		// number of loops using this sfx
 	int				loopActiveCnt;		// number of playing loops using this sfx
 	int				masterLoopSrc;		// All other sources looping this buffer are synced to this master src
@@ -247,10 +257,8 @@ S_AL_BufferUseDefault
 */
 static void S_AL_BufferUseDefault(sfxHandle_t sfx)
 {
-	if(sfx == default_sfx)
-		Com_Error(ERR_FATAL, "Can't load default sound effect %s", knownSfx[sfx].filename);
-
-	Com_Printf( S_COLOR_YELLOW "WARNING: Using default sound for %s\n", knownSfx[sfx].filename);
+	if (sfx != default_sfx)
+		Com_Printf( S_COLOR_YELLOW "WARNING: Using default sound for %s\n", knownSfx[sfx].filename);
 	knownSfx[sfx].isDefault = qtrue;
 	knownSfx[sfx].buffer = knownSfx[default_sfx].buffer;
 }
@@ -362,6 +370,7 @@ static void S_AL_BufferLoad(sfxHandle_t sfx, qboolean cache)
 
 	void *data;
 	snd_info_t info;
+	int size_per_sec;
 	alSfx_t *curSfx = &knownSfx[sfx];
 
 	// Nothing?
@@ -379,6 +388,10 @@ static void S_AL_BufferLoad(sfxHandle_t sfx, qboolean cache)
 		S_AL_BufferUseDefault(sfx);
 		return;
 	}
+
+	size_per_sec = info.rate * info.channels * info.width;
+	if( size_per_sec > 0 )
+		curSfx->duration = (int)(1000.0f * ((double)info.size / size_per_sec));
 
 	curSfx->isDefaultChecked = qtrue;
 
@@ -405,7 +418,7 @@ static void S_AL_BufferLoad(sfxHandle_t sfx, qboolean cache)
 		// We have no data to buffer, so buffer silence
 		byte dummyData[ 2 ] = { 0 };
 
-		qalBufferData(curSfx->buffer, AL_FORMAT_MONO16, (void *)dummyData, 2, 22050);
+		qalBufferData(curSfx->buffer, AL_FORMAT_MONO16, (void *)dummyData, 2, 44100);
 	}
 	else
 		qalBufferData(curSfx->buffer, format, data, info.size, info.rate);
@@ -481,8 +494,12 @@ qboolean S_AL_BufferInit( void )
 	numSfx = 0;
 
 	// Load the default sound, and lock it
-	default_sfx = S_AL_BufferFind("sound/feedback/hit.wav");
+	default_sfx = S_AL_BufferFind(com_gameConfig.defaultSound);
 	S_AL_BufferUse(default_sfx);
+
+	if( knownSfx[default_sfx].isDefault )
+		Com_Error( ERR_FATAL, "Can't load default sound effect %s", com_gameConfig.defaultSound );
+
 	knownSfx[default_sfx].isLocked = qtrue;
 
 	// All done
@@ -540,6 +557,22 @@ sfxHandle_t S_AL_RegisterSound( const char *sample, qboolean compressed )
 
 /*
 =================
+S_AL_SoundDuration
+=================
+*/
+static
+int S_AL_SoundDuration( sfxHandle_t sfx )
+{
+	if (sfx < 0 || sfx >= numSfx)
+	{
+		Com_Printf(S_COLOR_RED "ERROR: S_AL_SoundDuration: handle %i out of range\n", sfx);
+		return 0;
+	}
+	return knownSfx[sfx].duration;
+}
+
+/*
+=================
 S_AL_BufferGet
 
 Return's a sfx's buffer
@@ -591,8 +624,6 @@ static src_t srcList[MAX_SRC];
 static int srcCount = 0;
 static int srcActiveCnt = 0;
 static qboolean alSourcesInitialised = qfalse;
-static int lastListenerNumber = -1;
-static vec3_t lastListenerOrigin = { 0.0f, 0.0f, 0.0f };
 
 typedef struct sentity_s
 {
@@ -652,7 +683,7 @@ static void S_AL_ScaleGain(src_t *chksrc, vec3_t origin)
 	float distance;
 	
 	if(!chksrc->local)
-		distance = Distance(origin, lastListenerOrigin);
+		distance = S_ListenersClosestDistance(origin);
 		
 	// If we exceed a certain distance, scale the gain linearly until the sound
 	// vanishes into nothingness.
@@ -678,38 +709,6 @@ static void S_AL_ScaleGain(src_t *chksrc, vec3_t origin)
 		chksrc->scaleGain = chksrc->curGain;
 		S_AL_Gain(chksrc->alSource, chksrc->scaleGain);
 	}
-}
-
-/*
-=================
-S_AL_HearingThroughEntity
-
-Also see S_Base_HearingThroughEntity
-=================
-*/
-static qboolean S_AL_HearingThroughEntity( int entityNum )
-{
-	float	distanceSq;
-
-	if( lastListenerNumber == entityNum )
-	{
-		// This is an outrageous hack to detect
-		// whether or not the player is rendering in third person or not. We can't
-		// ask the renderer because the renderer has no notion of entities and we
-		// can't ask cgame since that would involve changing the API and hence mod
-		// compatibility. I don't think there is any way around this, but I'll leave
-		// the FIXME just in case anyone has a bright idea.
-		distanceSq = DistanceSquared(
-				entityList[ entityNum ].origin,
-				lastListenerOrigin );
-
-		if( distanceSq > THIRD_PERSON_THRESHOLD_SQ )
-			return qfalse; //we're the player, but third person
-		else
-			return qtrue;  //we're the player
-	}
-	else
-		return qfalse; //not the player
 }
 
 /*
@@ -1253,7 +1252,7 @@ static void S_AL_StartSound( vec3_t origin, int entnum, int entchannel, sfxHandl
 		if(S_AL_CheckInput(entnum, sfx))
 			return;
 
-		if(S_AL_HearingThroughEntity(entnum))
+		if(S_HearingThroughEntity(entnum))
 		{
 			S_AL_StartLocalSound(sfx, entchannel);
 			return;
@@ -1265,7 +1264,7 @@ static void S_AL_StartSound( vec3_t origin, int entnum, int entchannel, sfxHandl
 	S_AL_SanitiseVector(sorigin);
 	
 	if((srcActiveCnt > 5 * srcCount / 3) &&
-		(DistanceSquared(sorigin, lastListenerOrigin) >=
+		(S_ListenersClosestDistanceSquared(sorigin) >=
 		(s_alMaxDistance->value + s_alGraceDistance->value) * (s_alMaxDistance->value + s_alGraceDistance->value)))
 	{
 		// We're getting tight on sources and source is not within hearing distance so don't add it
@@ -1365,7 +1364,7 @@ static void S_AL_SrcLoop( alSrcPriority_t priority, sfxHandle_t sfx,
 	curSource->entity = entityNum;
 	curSource->isLooping = qtrue;
 
-	if( S_AL_HearingThroughEntity( entityNum ) )
+	if( S_HearingThroughEntity( entityNum ) )
 	{
 		curSource->local = qtrue;
 
@@ -1660,6 +1659,11 @@ ALuint S_AL_SrcGet(srcHandle_t src)
 
 //===========================================================================
 
+#define NUM_MUSIC_BUFFERS	4
+#define MUSIC_BUFFER_SIZE 4096
+
+static byte decode_buffer[MUSIC_BUFFER_SIZE];
+
 // Q3A cinematics use up to 12 buffers at once
 #define MAX_STREAM_BUFFERS 20
 
@@ -1669,6 +1673,12 @@ static ALuint streamSources[MAX_RAW_STREAMS];
 static ALuint streamBuffers[MAX_RAW_STREAMS][MAX_STREAM_BUFFERS];
 static int streamNumBuffers[MAX_RAW_STREAMS];
 static int streamBufIndex[MAX_RAW_STREAMS];
+
+static snd_stream_t *streamSoundStreams[MAX_STREAMING_SOUNDS];
+static float streamVolume[MAX_STREAMING_SOUNDS];
+static char streamQueued[MAX_STREAMING_SOUNDS][MAX_QPATH];
+static float streamQueuedVolume[MAX_STREAMING_SOUNDS];
+static int streamPlayCount[MAX_STREAMING_SOUNDS];
 
 /*
 =================
@@ -1741,6 +1751,9 @@ static void S_AL_FreeStreamChannel( int stream )
 	if ((stream < 0) || (stream >= MAX_RAW_STREAMS))
 		return;
 
+	if(streamSourceHandles[stream] == -1)
+		return;
+
 	// Detach any buffers
 	qalSourcei(streamSources[stream], AL_BUFFER, 0);
 
@@ -1755,6 +1768,12 @@ static void S_AL_FreeStreamChannel( int stream )
 	S_AL_SrcKill(streamSourceHandles[stream]);
 	streamSources[stream] = 0;
 	streamSourceHandles[stream] = -1;
+
+	if(stream < MAX_STREAMING_SOUNDS && streamSoundStreams[stream])
+	{
+		S_CodecCloseStream(streamSoundStreams[stream]);
+		streamSoundStreams[stream] = NULL;
+	}
 }
 
 /*
@@ -1842,6 +1861,78 @@ void S_AL_RawSamples(int stream, int samples, int rate, int width, int channels,
 
 /*
 =================
+S_AL_StreamingSoundProcess
+=================
+*/
+static
+qboolean S_AL_StreamingSoundProcess( int stream, ALuint b )
+{
+	ALenum error;
+	int l;
+	ALuint format;
+	snd_stream_t *curstream;
+
+	if ((stream < 0) || (stream >= MAX_STREAMING_SOUNDS))
+		return qfalse;
+
+	S_AL_ClearError( qfalse );
+
+	curstream = streamSoundStreams[stream];
+
+	if(!curstream)
+		return qfalse;
+
+	l = S_CodecReadStream(curstream, MUSIC_BUFFER_SIZE, decode_buffer);
+
+	// Ran out data to read
+	if(l == 0)
+	{
+		S_CodecCloseStream(curstream);
+
+		streamPlayCount[stream]++;
+
+		if (streamQueued[stream][0])
+		{
+			streamVolume[stream] = streamQueuedVolume[stream];
+			curstream = S_CodecOpenStream(streamQueued[stream]);
+		}
+		else
+		{
+			curstream = NULL;
+		}
+
+		streamSoundStreams[stream] = curstream;
+
+		if (!curstream)
+			return qfalse;
+
+		l = S_CodecReadStream(curstream, MUSIC_BUFFER_SIZE, decode_buffer);
+	}
+
+	format = S_AL_Format(curstream->info.width, curstream->info.channels);
+
+	if( l == 0 )
+	{
+		// We have no data to buffer, so buffer silence
+		byte dummyData[ 2 ] = { 0 };
+
+		qalBufferData( b, AL_FORMAT_MONO16, (void *)dummyData, 2, 44100 );
+	}
+	else
+		qalBufferData(b, format, decode_buffer, l, curstream->info.rate);
+
+	if( ( error = qalGetError( ) ) != AL_NO_ERROR )
+	{
+		Com_DPrintf( S_COLOR_RED "ERROR: while buffering data for audio stream - %s\n",
+				S_AL_ErrorMsg( error ) );
+		return qfalse;
+	}
+
+	return qtrue;
+}
+
+/*
+=================
 S_AL_StreamUpdate
 =================
 */
@@ -1862,7 +1953,22 @@ void S_AL_StreamUpdate( int stream )
 	while( numBuffers-- )
 	{
 		ALuint buffer;
+
 		qalSourceUnqueueBuffers(streamSources[stream], 1, &buffer);
+
+		if ( S_AL_StreamingSoundProcess(stream, buffer) )
+		{
+			ALenum error;
+
+			qalSourceQueueBuffers(streamSources[stream], 1, &buffer);
+
+			if( ( error = qalGetError( ) ) != AL_NO_ERROR )
+			{
+				Com_DPrintf( S_COLOR_RED "ERROR: after queueing data for audio stream - %s\n",
+						S_AL_ErrorMsg( error ) );
+			}
+		}
+
 	}
 
 	// Start the streamSource playing if necessary
@@ -1875,13 +1981,29 @@ void S_AL_StreamUpdate( int stream )
 
 		// If there are no buffers queued up, release the streamSource
 		if( !numBuffers )
+		{
 			S_AL_FreeStreamChannel( stream );
+			return;
+		}
 	}
 
 	if( !streamPlaying[stream] && numBuffers )
 	{
 		qalSourcePlay( streamSources[stream] );
 		streamPlaying[stream] = qtrue;
+	}
+
+	if ( stream < MAX_STREAMING_SOUNDS )
+	{
+		// Set the gain property
+		srcHandle_t cursrc = streamSourceHandles[stream];
+		float gain = s_alGain->value * s_musicVolume->value * streamVolume[stream];
+
+		if ( srcList[cursrc].isTracking ) {
+			srcList[cursrc].curGain = gain;
+		} else {
+			S_AL_Gain( streamSources[stream], gain );
+		}
 	}
 }
 
@@ -1905,85 +2027,133 @@ void S_AL_StreamDie( int stream )
 	S_AL_FreeStreamChannel(stream);
 }
 
+/*
+=================
+S_AL_StopStreamingSound
+=================
+*/
+static
+void S_AL_StopStreamingSound( int stream )
+{
+	S_AL_StreamDie( stream );
+}
+
+/*
+=================
+S_AL_StartStreamingSound
+=================
+*/
+static
+void S_AL_StartStreamingSound( int stream, int entityNum, const char *filename, float volume )
+{
+	int i;
+
+	if ((stream < 0) || (stream >= MAX_STREAMING_SOUNDS))
+		return;
+
+	// Stop any existing music that might be playing
+	S_AL_StopStreamingSound( stream );
+
+	if(!filename || !*filename)
+		return;
+
+	// Allocate a music source
+	S_AL_AllocateStreamChannel(stream, entityNum);
+	if(streamSourceHandles[stream] == -1)
+		return;
+
+	streamVolume[stream] = Com_Clamp(0, 10, volume);
+	streamQueued[stream][0] = 0;
+	streamPlayCount[stream] = 0;
+
+	streamSoundStreams[stream] = S_CodecOpenStream(filename);
+	if(!streamSoundStreams[stream])
+	{
+		S_AL_FreeStreamChannel( stream );
+		return;
+	}
+
+	// Generate the buffers
+	if (!S_AL_GenBuffers(NUM_MUSIC_BUFFERS, streamBuffers[stream], "steaming sound"))
+	{
+		S_AL_FreeStreamChannel( stream );
+		return;
+	}
+
+	streamNumBuffers[stream] = NUM_MUSIC_BUFFERS;
+
+	// Queue the buffers up
+	for(i = 0; i < NUM_MUSIC_BUFFERS; i++)
+	{
+		S_AL_StreamingSoundProcess(stream, streamBuffers[stream][i]);
+	}
+
+	qalSourceQueueBuffers(streamSources[stream], NUM_MUSIC_BUFFERS, streamBuffers[stream]);
+
+	// Set the initial gain property
+	if(entityNum < 0)
+	{
+		S_AL_Gain(streamSources[stream], s_alGain->value * s_musicVolume->value * streamVolume[stream]);
+	}
+
+	// Start playing
+	qalSourcePlay(streamSources[stream]);
+
+	streamPlaying[stream] = qtrue;
+}
+
+/*
+=================
+S_AL_QueueStreamingSound
+=================
+*/
+static
+void S_AL_QueueStreamingSound( int stream, const char *filename, float volume ) {
+	if ((stream < 0) || (stream >= MAX_STREAMING_SOUNDS))
+		return;
+
+	if (!filename)
+		streamQueued[stream][0] = 0;
+	else
+		Q_strncpyz( streamQueued[stream], filename, sizeof( streamQueued[0] ) );
+
+	streamQueuedVolume[stream] = Com_Clamp(0, 10, volume);
+}
+
+/*
+=================
+S_AL_GetStreamPlayCount
+
+when it changes, you can queue the next track
+=================
+*/
+static
+int S_AL_GetStreamPlayCount( int stream ) {
+	if ((stream < 0) || (stream >= MAX_STREAMING_SOUNDS))
+		return 0;
+
+	return streamPlayCount[stream];
+}
+
+/*
+=================
+S_AL_SetStreamVolume
+
+for music, call each frame with s_musicVolume->value
+
+this is bad for trying to fade in or out a stream at beginning for end, would be fine if don't care _where_ in the stream the change happens.
+=================
+*/
+static
+void S_AL_SetStreamVolume( int stream, float volume ) {
+	if ((stream < 0) || (stream >= MAX_STREAMING_SOUNDS))
+		return;
+
+	streamVolume[stream] = Com_Clamp(0, 10, volume);
+}
 
 //===========================================================================
 
-
-#define NUM_MUSIC_BUFFERS	4
-#define	MUSIC_BUFFER_SIZE 4096
-
-static qboolean musicPlaying = qfalse;
-static srcHandle_t musicSourceHandle = -1;
-static ALuint musicSource;
-static ALuint musicBuffers[NUM_MUSIC_BUFFERS];
-
-static snd_stream_t *mus_stream;
-static snd_stream_t *intro_stream;
-static char s_backgroundLoop[MAX_QPATH];
-
-static byte decode_buffer[MUSIC_BUFFER_SIZE];
-
-/*
-=================
-S_AL_MusicSourceGet
-=================
-*/
-static void S_AL_MusicSourceGet( void )
-{
-	// Allocate a musicSource at high priority
-	musicSourceHandle = S_AL_SrcAlloc(SRCPRI_STREAM, -2, 0);
-	if(musicSourceHandle == -1)
-		return;
-
-	// Lock the musicSource so nobody else can use it, and get the raw musicSource
-	S_AL_SrcLock(musicSourceHandle);
-	musicSource = S_AL_SrcGet(musicSourceHandle);
-
-	// make sure that after unmuting the S_AL_Gain in S_Update() does not turn
-	// volume up prematurely for this source
-	srcList[musicSourceHandle].scaleGain = 0.0f;
-
-	// Set some musicSource parameters
-	qalSource3f(musicSource, AL_POSITION,        0.0, 0.0, 0.0);
-	qalSource3f(musicSource, AL_VELOCITY,        0.0, 0.0, 0.0);
-	qalSource3f(musicSource, AL_DIRECTION,       0.0, 0.0, 0.0);
-	qalSourcef (musicSource, AL_ROLLOFF_FACTOR,  0.0          );
-	qalSourcei (musicSource, AL_SOURCE_RELATIVE, AL_TRUE      );
-}
-
-/*
-=================
-S_AL_MusicSourceFree
-=================
-*/
-static void S_AL_MusicSourceFree( void )
-{
-	// Release the output musicSource
-	S_AL_SrcUnlock(musicSourceHandle);
-	S_AL_SrcKill(musicSourceHandle);
-	musicSource = 0;
-	musicSourceHandle = -1;
-}
-
-/*
-=================
-S_AL_CloseMusicFiles
-=================
-*/
-static void S_AL_CloseMusicFiles(void)
-{
-	if(intro_stream)
-	{
-		S_CodecCloseStream(intro_stream);
-		intro_stream = NULL;
-	}
-	
-	if(mus_stream)
-	{
-		S_CodecCloseStream(mus_stream);
-		mus_stream = NULL;
-	}
-}
 
 /*
 =================
@@ -1993,94 +2163,7 @@ S_AL_StopBackgroundTrack
 static
 void S_AL_StopBackgroundTrack( void )
 {
-	if(!musicPlaying)
-		return;
-
-	// Stop playing
-	qalSourceStop(musicSource);
-
-	// Detach any buffers
-	qalSourcei(musicSource, AL_BUFFER, 0);
-
-	// Delete the buffers
-	qalDeleteBuffers(NUM_MUSIC_BUFFERS, musicBuffers);
-
-	// Free the musicSource
-	S_AL_MusicSourceFree();
-
-	// Unload the stream
-	S_AL_CloseMusicFiles();
-
-	musicPlaying = qfalse;
-}
-
-/*
-=================
-S_AL_MusicProcess
-=================
-*/
-static
-void S_AL_MusicProcess(ALuint b)
-{
-	ALenum error;
-	int l;
-	ALuint format;
-	snd_stream_t *curstream;
-
-	S_AL_ClearError( qfalse );
-
-	if(intro_stream)
-		curstream = intro_stream;
-	else
-		curstream = mus_stream;
-
-	if(!curstream)
-		return;
-
-	l = S_CodecReadStream(curstream, MUSIC_BUFFER_SIZE, decode_buffer);
-
-	// Run out data to read, start at the beginning again
-	if(l == 0)
-	{
-		S_CodecCloseStream(curstream);
-
-		// the intro stream just finished playing so we don't need to reopen
-		// the music stream.
-		if(intro_stream)
-			intro_stream = NULL;
-		else
-			mus_stream = S_CodecOpenStream(s_backgroundLoop);
-		
-		curstream = mus_stream;
-
-		if(!curstream)
-		{
-			S_AL_StopBackgroundTrack();
-			return;
-		}
-
-		l = S_CodecReadStream(curstream, MUSIC_BUFFER_SIZE, decode_buffer);
-	}
-
-	format = S_AL_Format(curstream->info.width, curstream->info.channels);
-
-	if( l == 0 )
-	{
-		// We have no data to buffer, so buffer silence
-		byte dummyData[ 2 ] = { 0 };
-
-		qalBufferData( b, AL_FORMAT_MONO16, (void *)dummyData, 2, 22050 );
-	}
-	else
-		qalBufferData(b, format, decode_buffer, l, curstream->info.rate);
-
-	if( ( error = qalGetError( ) ) != AL_NO_ERROR )
-	{
-		S_AL_StopBackgroundTrack( );
-		Com_Printf( S_COLOR_RED "ERROR: while buffering data for music stream - %s\n",
-				S_AL_ErrorMsg( error ) );
-		return;
-	}
+	S_AL_StopStreamingSound( 0 );
 }
 
 /*
@@ -2089,109 +2172,10 @@ S_AL_StartBackgroundTrack
 =================
 */
 static
-void S_AL_StartBackgroundTrack( const char *intro, const char *loop )
+void S_AL_StartBackgroundTrack( const char *intro, const char *loop, float volume, float loopVolume )
 {
-	int i;
-	qboolean issame;
-
-	// Stop any existing music that might be playing
-	S_AL_StopBackgroundTrack();
-
-	if((!intro || !*intro) && (!loop || !*loop))
-		return;
-
-	// Allocate a musicSource
-	S_AL_MusicSourceGet();
-	if(musicSourceHandle == -1)
-		return;
-
-	if (!loop || !*loop)
-	{
-		loop = intro;
-		issame = qtrue;
-	}
-	else if(intro && *intro && !strcmp(intro, loop))
-		issame = qtrue;
-	else
-		issame = qfalse;
-
-	// Copy the loop over
-	Q_strncpyz( s_backgroundLoop, loop, sizeof( s_backgroundLoop ) );
-
-	if(!issame)
-	{
-		// Open the intro and don't mind whether it succeeds.
-		// The important part is the loop.
-		intro_stream = S_CodecOpenStream(intro);
-	}
-	else
-		intro_stream = NULL;
-
-	mus_stream = S_CodecOpenStream(s_backgroundLoop);
-	if(!mus_stream)
-	{
-		S_AL_CloseMusicFiles();
-		S_AL_MusicSourceFree();
-		return;
-	}
-
-	// Generate the musicBuffers
-	if (!S_AL_GenBuffers(NUM_MUSIC_BUFFERS, musicBuffers, "music"))
-		return;
-	
-	// Queue the musicBuffers up
-	for(i = 0; i < NUM_MUSIC_BUFFERS; i++)
-	{
-		S_AL_MusicProcess(musicBuffers[i]);
-	}
-
-	qalSourceQueueBuffers(musicSource, NUM_MUSIC_BUFFERS, musicBuffers);
-
-	// Set the initial gain property
-	S_AL_Gain(musicSource, s_alGain->value * s_musicVolume->value);
-	
-	// Start playing
-	qalSourcePlay(musicSource);
-
-	musicPlaying = qtrue;
-}
-
-/*
-=================
-S_AL_MusicUpdate
-=================
-*/
-static
-void S_AL_MusicUpdate( void )
-{
-	int		numBuffers;
-	ALint	state;
-
-	if(!musicPlaying)
-		return;
-
-	qalGetSourcei( musicSource, AL_BUFFERS_PROCESSED, &numBuffers );
-	while( numBuffers-- )
-	{
-		ALuint b;
-		qalSourceUnqueueBuffers(musicSource, 1, &b);
-		S_AL_MusicProcess(b);
-		qalSourceQueueBuffers(musicSource, 1, &b);
-	}
-
-	// Hitches can cause OpenAL to be starved of buffers when streaming.
-	// If this happens, it will stop playback. This restarts the source if
-	// it is no longer playing, and if there are buffers available
-	qalGetSourcei( musicSource, AL_SOURCE_STATE, &state );
-	qalGetSourcei( musicSource, AL_BUFFERS_QUEUED, &numBuffers );
-	if( state == AL_STOPPED && numBuffers )
-	{
-		Com_DPrintf( S_COLOR_YELLOW "Restarted OpenAL music\n" );
-		qalSourcePlay(musicSource);
-	}
-
-	// Set the gain property
-	S_AL_Gain(musicSource, s_alGain->value * s_musicVolume->value);
+	S_AL_StartStreamingSound( 0, -1, intro, volume );
+	S_AL_QueueStreamingSound( 0, (loop && *loop) ? loop : intro, loopVolume );
 }
 
 
@@ -2229,7 +2213,6 @@ void S_AL_StopAllSounds( void )
 {
 	int i;
 	S_AL_SrcShutup();
-	S_AL_StopBackgroundTrack();
 	for (i = 0; i < MAX_RAW_STREAMS; i++)
 		S_AL_StreamDie(i);
 }
@@ -2240,7 +2223,7 @@ S_AL_Respatialize
 =================
 */
 static
-void S_AL_Respatialize( int entityNum, const vec3_t origin, vec3_t axis[3], int inwater )
+void S_AL_Respatialize( int entityNum, const vec3_t origin, vec3_t axis[3], int inwater, qboolean firstPerson )
 {
 	float		orientation[6];
 	vec3_t	sorigin;
@@ -2252,11 +2235,18 @@ void S_AL_Respatialize( int entityNum, const vec3_t origin, vec3_t axis[3], int 
 	S_AL_SanitiseVector( axis[ 1 ] );
 	S_AL_SanitiseVector( axis[ 2 ] );
 
+	S_UpdateListener(entityNum, origin, (const vec3_t *)axis, inwater, firstPerson);
+
+	if ( S_NumUpdatedListeners() > 1 )
+	{
+		// only update the AL relative listener position if this is the first listener added this frame
+		// ZTM: FIXME: Support playing sounds relative to all listeners!
+		// ZTM: NOTE: Sounds from all first person listeners will be full volume as they are suppose to.
+		return;
+	}
+
 	orientation[0] = axis[0][0]; orientation[1] = axis[0][1]; orientation[2] = axis[0][2];
 	orientation[3] = axis[2][0]; orientation[4] = axis[2][1]; orientation[5] = axis[2][2];
-
-	lastListenerNumber = entityNum;
-	VectorCopy( sorigin, lastListenerOrigin );
 
 	// Set OpenAL listener paramaters
 	qalListenerfv(AL_POSITION, (ALfloat *)sorigin);
@@ -2292,7 +2282,6 @@ void S_AL_Update( void )
 	// Update streams
 	for (i = 0; i < MAX_RAW_STREAMS; i++)
 		S_AL_StreamUpdate(i);
-	S_AL_MusicUpdate();
 
 	// Doppler
 	if(s_doppler->modified)
@@ -2453,7 +2442,6 @@ void S_AL_Shutdown( void )
 	int i;
 	for (i = 0; i < MAX_RAW_STREAMS; i++)
 		S_AL_StreamDie(i);
-	S_AL_StopBackgroundTrack( );
 	S_AL_SrcShutdown( );
 	S_AL_BufferShutdown( );
 
@@ -2702,6 +2690,11 @@ qboolean S_AL_Init( soundInterface_t *si )
 	si->StartLocalSound = S_AL_StartLocalSound;
 	si->StartBackgroundTrack = S_AL_StartBackgroundTrack;
 	si->StopBackgroundTrack = S_AL_StopBackgroundTrack;
+	si->StartStreamingSound = S_AL_StartStreamingSound;
+	si->StopStreamingSound = S_AL_StopStreamingSound;
+	si->QueueStreamingSound = S_AL_QueueStreamingSound;
+	si->GetStreamPlayCount = S_AL_GetStreamPlayCount;
+	si->SetStreamVolume = S_AL_SetStreamVolume;
 	si->RawSamples = S_AL_RawSamples;
 	si->StopAllSounds = S_AL_StopAllSounds;
 	si->ClearLoopingSounds = S_AL_ClearLoopingSounds;
@@ -2714,6 +2707,7 @@ qboolean S_AL_Init( soundInterface_t *si )
 	si->DisableSounds = S_AL_DisableSounds;
 	si->BeginRegistration = S_AL_BeginRegistration;
 	si->RegisterSound = S_AL_RegisterSound;
+	si->SoundDuration = S_AL_SoundDuration;
 	si->ClearSoundBuffer = S_AL_ClearSoundBuffer;
 	si->SoundInfo = S_AL_SoundInfo;
 	si->SoundList = S_AL_SoundList;

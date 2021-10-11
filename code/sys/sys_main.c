@@ -1,25 +1,36 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 
+#ifdef WIN32 // ZTM: for numlock state
+#include <windows.h>
+#endif
 #include <signal.h>
 #include <stdlib.h>
 #include <limits.h>
@@ -164,10 +175,40 @@ char *Sys_GetClipboardData(void)
 #endif
 }
 
-#ifdef DEDICATED
-#	define PID_FILENAME PRODUCT_NAME "_server.pid"
+#ifndef DEDICATED
+/*
+===============
+Sys_GetCapsLockMode
+===============
+*/
+qboolean Sys_GetCapsLockMode( void ) {
+#ifdef WIN32
+	// ZTM: TODO: SDL does not track Windows num/caps lock state. Remove this after it's fixed by a major SDL version? (i.e., SDL 2.1)
+	return ( GetKeyState( VK_CAPITAL ) & 0x0001 ) ? qtrue : qfalse;
 #else
-#	define PID_FILENAME PRODUCT_NAME ".pid"
+	return ( SDL_GetModState() & KMOD_CAPS ) ? qtrue : qfalse;
+#endif
+}
+
+/*
+===============
+Sys_GetNumLockMode
+===============
+*/
+qboolean Sys_GetNumLockMode( void ) {
+#ifdef WIN32
+	// ZTM: TODO: SDL does not track Windows num/caps lock state. Remove this after it's fixed by a major SDL version? (i.e., SDL 2.1)
+	return ( GetKeyState( VK_NUMLOCK ) & 0x0001 ) ? qtrue : qfalse;
+#else
+	return ( SDL_GetModState() & KMOD_NUM ) ? qtrue : qfalse;
+#endif
+}
+#endif
+
+#ifdef DEDICATED
+#	define PID_FILENAME "server.pid"
+#else
+#	define PID_FILENAME "client.pid"
 #endif
 
 /*
@@ -257,14 +298,10 @@ void Sys_InitPIDFile( const char *gamedir ) {
 	if( Sys_WritePIDFile( gamedir ) ) {
 #ifndef DEDICATED
 		char message[1024];
-		char modName[MAX_OSPATH];
-
-		FS_GetModDescription( gamedir, modName, sizeof ( modName ) );
-		Q_CleanStr( modName );
 
 		Com_sprintf( message, sizeof (message), "The last time %s ran, "
 			"it didn't exit properly. This may be due to inappropriate video "
-			"settings. Would you like to start with \"safe\" video settings?", modName );
+			"settings. Would you like to start with \"safe\" video settings?", com_productName->string );
 
 		if( Sys_Dialog( DT_YES_NO, message, "Abnormal Exit" ) == DR_YES ) {
 			Cvar_Set( "com_abnormalExit", "1" );
@@ -593,7 +630,7 @@ void *Sys_LoadGameDll(const char *name,
 		return NULL;
 	}
 
-	Com_Printf( "Loading DLL file: %s\n", name);
+	Com_DPrintf( "Loading DLL file: %s\n", name);
 	libHandle = Sys_LoadLibrary(name);
 
 	if(!libHandle)
@@ -613,7 +650,7 @@ void *Sys_LoadGameDll(const char *name,
 		return NULL;
 	}
 
-	Com_Printf ( "Sys_LoadGameDll(%s) found vmMain function at %p\n", name, *entryPoint );
+	Com_DPrintf ( "Sys_LoadGameDll(%s) found vmMain function at %p\n", name, *entryPoint );
 	dllEntry( systemcalls );
 
 	return libHandle;
@@ -720,6 +757,8 @@ int main( int argc, char **argv )
 
 		Sys_Exit( 1 );
 	}
+
+	SDL_EventState( SDL_DROPFILE, SDL_ENABLE );
 #endif
 
 	Sys_PlatformInit( );
@@ -761,6 +800,20 @@ int main( int argc, char **argv )
 	signal( SIGSEGV, Sys_SigHandler );
 	signal( SIGTERM, Sys_SigHandler );
 	signal( SIGINT, Sys_SigHandler );
+
+#if !defined DEDICATED && !defined __APPLE__ && !defined WIN32
+	// HACK: Before SDL 2.0.4, Linux (X11) did not set numlock or capslock state
+	//       so I made the engine always assumed num lock was on.
+	// NOTE: The SDL mod state on X11 is not set at this point even when it's fixed
+	//       and will be corrected regardless of what is done here,
+	//       but limit to SDL 2.0.3 and earlier so that the message isn't shown.
+	if( SDL_VERSIONNUM( ver.major, ver.minor, ver.patch ) < SDL_VERSIONNUM( 2, 0, 4 ) ) {
+		if ( !( SDL_GetModState() & KMOD_NUM ) ) {
+			Com_Printf("INFO: Forcing NUMLOCK modifier state to enabled (actual state unknown)!\n");
+			SDL_SetModState( SDL_GetModState() | KMOD_NUM );
+		}
+	}
+#endif
 
 	while( 1 )
 	{

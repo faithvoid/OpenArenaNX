@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 
@@ -26,8 +34,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  * desc:		video and cinematic playback
  *
  * $Archive: /MissionPack/code/client/cl_cin.c $
- *
- * cl_glconfig.hwtype trtypes 3dfx/ragepro need 256x256
  *
  *****************************************************************************/
 
@@ -130,7 +136,6 @@ typedef struct {
 static cinematics_t		cin;
 static cin_cache		cinTable[MAX_VIDEO_HANDLES];
 static int				currentHandle = -1;
-static int				CL_handle = -1;
 
 extern int				s_soundtime;		// sample PAIRS
 
@@ -159,7 +164,7 @@ static int CIN_HandleForVideo(void) {
 }
 
 
-extern int CL_ScaledMilliseconds(void);
+extern int Com_ScaledMilliseconds(void);
 
 //-----------------------------------------------------------------------------
 // RllSetupTable
@@ -996,8 +1001,8 @@ static void readQuadInfo( byte *qData )
         cinTable[currentHandle].drawX = cinTable[currentHandle].CIN_WIDTH;
         cinTable[currentHandle].drawY = cinTable[currentHandle].CIN_HEIGHT;
         
-	// rage pro is very slow at 512 wide textures, voodoo can't do it at all
-	if ( cls.glconfig.hardwareType == GLHW_RAGEPRO || cls.glconfig.maxTextureSize <= 256) {
+	// some old drivers can't do it at all
+	if (cls.glconfig.maxTextureSize <= 256) {
                 if (cinTable[currentHandle].drawX>256) {
                         cinTable[currentHandle].drawX = 256;
                 }
@@ -1005,7 +1010,7 @@ static void readQuadInfo( byte *qData )
                         cinTable[currentHandle].drawY = 256;
                 }
 		if (cinTable[currentHandle].CIN_WIDTH != 256 || cinTable[currentHandle].CIN_HEIGHT != 256) {
-			Com_Printf("HACK: approxmimating cinematic for Rage Pro or Voodoo\n");
+			Com_Printf("HACK: approxmimating cinematic to 256x256 from %dx%d\n", cinTable[currentHandle].CIN_WIDTH, cinTable[currentHandle].CIN_HEIGHT);
 		}
 	}
 }
@@ -1166,7 +1171,7 @@ redump:
 			if (cinTable[currentHandle].numQuads == -1) {
 				readQuadInfo( framedata );
 				setupQuad( 0, 0 );
-				cinTable[currentHandle].startTime = cinTable[currentHandle].lastTime = CL_ScaledMilliseconds();
+				cinTable[currentHandle].startTime = cinTable[currentHandle].lastTime = Com_ScaledMilliseconds();
 			}
 			if (cinTable[currentHandle].numQuads != 1) cinTable[currentHandle].numQuads = 0;
 			break;
@@ -1233,7 +1238,7 @@ redump:
 
 static void RoQ_init( void )
 {
-	cinTable[currentHandle].startTime = cinTable[currentHandle].lastTime = CL_ScaledMilliseconds();
+	cinTable[currentHandle].startTime = cinTable[currentHandle].lastTime = Com_ScaledMilliseconds();
 
 	cinTable[currentHandle].RoQPlayed = 24;
 
@@ -1291,7 +1296,6 @@ static void RoQShutdown( void ) {
 			Cbuf_ExecuteText( EXEC_APPEND, va("%s\n", s) );
 			Cvar_Set( "nextmap", "" );
 		}
-		CL_handle = -1;
 	}
 	cinTable[currentHandle].fileName[0] = 0;
 	currentHandle = -1;
@@ -1314,6 +1318,7 @@ e_status CIN_StopCinematic(int handle) {
 	}
 
 	if (cinTable[currentHandle].alterGameState) {
+		S_StopAllSounds(); // ZTM: FIXME: would it be better to add new trap for cgame?
 		if ( clc.state != CA_CINEMATIC ) {
 			return cinTable[currentHandle].status;
 		}
@@ -1364,11 +1369,11 @@ e_status CIN_RunCinematic (int handle)
 		return cinTable[currentHandle].status;
 	}
 
-	thisTime = CL_ScaledMilliseconds();
+	thisTime = Com_ScaledMilliseconds();
 	if (cinTable[currentHandle].shader && (abs(thisTime - cinTable[currentHandle].lastTime))>100) {
 		cinTable[currentHandle].startTime += thisTime - cinTable[currentHandle].lastTime;
 	}
-	cinTable[currentHandle].tfps = (((CL_ScaledMilliseconds() - cinTable[currentHandle].startTime)*3)/100);
+	cinTable[currentHandle].tfps = (((Com_ScaledMilliseconds() - cinTable[currentHandle].startTime)*3)/100);
 
 	start = cinTable[currentHandle].startTime;
 	while(  (cinTable[currentHandle].tfps != cinTable[currentHandle].numQuads)
@@ -1376,7 +1381,7 @@ e_status CIN_RunCinematic (int handle)
 	{
 		RoQInterrupt();
 		if (start != cinTable[currentHandle].startTime) {
-			cinTable[currentHandle].tfps = (((CL_ScaledMilliseconds() - cinTable[currentHandle].startTime)*3)/100);
+			cinTable[currentHandle].tfps = (((Com_ScaledMilliseconds() - cinTable[currentHandle].startTime)*3)/100);
 			start = cinTable[currentHandle].startTime;
 		}
 	}
@@ -1453,10 +1458,7 @@ int CIN_PlayCinematic( const char *arg, int x, int y, int w, int h, int systemBi
 	cinTable[currentHandle].shader = (systemBits & CIN_shader) != 0;
 
 	if (cinTable[currentHandle].alterGameState) {
-		// close the menu
-		if ( uivm ) {
-			VM_Call( uivm, UI_SET_ACTIVE_MENU, UIMENU_NONE );
-		}
+		CL_ShowMainMenu();
 	} else {
 		cinTable[currentHandle].playonwalls = cl_inGameVideo->integer;
 	}
@@ -1474,14 +1476,16 @@ int CIN_PlayCinematic( const char *arg, int x, int y, int w, int h, int systemBi
 		cinTable[currentHandle].status = FMV_PLAY;
 		Com_DPrintf("trFMV::play(), playing %s\n", arg);
 
-		if (cinTable[currentHandle].alterGameState) {
-			clc.state = CA_CINEMATIC;
-		}
-		
-		Con_Close();
-
 		if (!cinTable[currentHandle].silent) {
 			s_rawend[0] = s_soundtime;
+		}
+
+		if (cinTable[currentHandle].alterGameState) {
+			clc.state = CA_CINEMATIC;
+
+			do {
+				CIN_RunCinematic(currentHandle);
+			} while (cinTable[currentHandle].buf == NULL && cinTable[currentHandle].status == FMV_PLAY);		// wait for first frame (load codebook and sound)
 		}
 
 		return currentHandle;
@@ -1586,7 +1590,6 @@ void CIN_DrawCinematic (int handle) {
 	w = cinTable[handle].width;
 	h = cinTable[handle].height;
 	buf = cinTable[handle].buf;
-	SCR_AdjustFrom640( &x, &y, &w, &h );
 
 	if (cinTable[handle].dirty && (cinTable[handle].CIN_WIDTH != cinTable[handle].drawX || cinTable[handle].CIN_HEIGHT != cinTable[handle].drawY)) {
 		int *buf2;
@@ -1603,57 +1606,6 @@ void CIN_DrawCinematic (int handle) {
 
 	re.DrawStretchRaw( x, y, w, h, cinTable[handle].drawX, cinTable[handle].drawY, buf, handle, cinTable[handle].dirty);
 	cinTable[handle].dirty = qfalse;
-}
-
-void CL_PlayCinematic_f(void) {
-	char	*arg, *s;
-	int bits = CIN_system;
-
-	Com_DPrintf("CL_PlayCinematic_f\n");
-	if (clc.state == CA_CINEMATIC) {
-		SCR_StopCinematic();
-	}
-
-	arg = Cmd_Argv( 1 );
-	s = Cmd_Argv(2);
-
-	if ((s && s[0] == '1') || Q_stricmp(arg,"demoend.roq")==0 || Q_stricmp(arg,"end.roq")==0) {
-		bits |= CIN_hold;
-	}
-	if (s && s[0] == '2') {
-		bits |= CIN_loop;
-	}
-
-	S_StopAllSounds ();
-
-	CL_handle = CIN_PlayCinematic( arg, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, bits );
-	if (CL_handle >= 0) {
-		do {
-			SCR_RunCinematic();
-		} while (cinTable[currentHandle].buf == NULL && cinTable[currentHandle].status == FMV_PLAY);		// wait for first frame (load codebook and sound)
-	}
-}
-
-
-void SCR_DrawCinematic (void) {
-	if (CL_handle >= 0 && CL_handle < MAX_VIDEO_HANDLES) {
-		CIN_DrawCinematic(CL_handle);
-	}
-}
-
-void SCR_RunCinematic (void)
-{
-	if (CL_handle >= 0 && CL_handle < MAX_VIDEO_HANDLES) {
-		CIN_RunCinematic(CL_handle);
-	}
-}
-
-void SCR_StopCinematic(void) {
-	if (CL_handle >= 0 && CL_handle < MAX_VIDEO_HANDLES) {
-		CIN_StopCinematic(CL_handle);
-		S_StopAllSounds ();
-		CL_handle = -1;
-	}
 }
 
 void CIN_UploadCinematic(int handle) {

@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 
@@ -38,7 +46,7 @@ typedef struct _TargaHeader {
 	unsigned char	pixel_size, attributes;
 } TargaHeader;
 
-void R_LoadTGA ( const char *name, byte **pic, int *width, int *height)
+void R_LoadTGA ( const char *name, int *numTexLevels, textureLevel_t **pic)
 {
 	unsigned	columns, rows, numPixels;
 	byte	*pixbuf;
@@ -54,11 +62,7 @@ void R_LoadTGA ( const char *name, byte **pic, int *width, int *height)
 	int length;
 
 	*pic = NULL;
-
-	if(width)
-		*width = 0;
-	if(height)
-		*height = 0;
+	*numTexLevels = 0;
 
 	//
 	// load the file
@@ -126,7 +130,13 @@ void R_LoadTGA ( const char *name, byte **pic, int *width, int *height)
 	}
 
 
-	targa_rgba = ri.Malloc (numPixels);
+	*pic = (textureLevel_t *)ri.Malloc( sizeof(textureLevel_t) + numPixels );
+	(*pic)->format = GL_RGBA8;
+	(*pic)->width = columns;
+	(*pic)->height = rows;
+	(*pic)->size = numPixels;
+	(*pic)->data = targa_rgba = (byte *)(*pic + 1);
+	*numTexLevels = 1;
 
 	if (targa_header.id_length != 0)
 	{
@@ -304,12 +314,107 @@ void R_LoadTGA ( const char *name, byte **pic, int *width, int *height)
     ri.Printf( PRINT_WARNING, "WARNING: '%s' TGA file header declares top-down image, ignoring\n", name);
   }
 
-  if (width)
-	  *width = columns;
-  if (height)
-	  *height = rows;
-
-  *pic = targa_rgba;
-
   ri.FS_FreeFile (buffer.v);
 }
+
+void RE_SaveTGA(char * filename, int image_width, int image_height, byte *image_buffer, int padding) {
+	byte *srcptr, *destptr;
+	byte *endline, *endmem;
+	byte *out;
+	size_t bufSize;
+	int linelen;
+
+	bufSize = image_width * image_height * 3 + 18;
+	out = ri.Hunk_AllocateTempMemory(bufSize);
+
+	Com_Memset (out, 0, 18);
+	out[2] = 2;		// uncompressed type
+	out[12] = image_width & 255;
+	out[13] = image_width >> 8;
+	out[14] = image_height & 255;
+	out[15] = image_height >> 8;
+	out[16] = 24;	// pixel size
+
+	// swap rgb to bgr and remove padding from line endings
+	linelen = image_width * 3;
+
+	srcptr = image_buffer;
+	destptr = out + 18;
+	endmem = srcptr + (linelen + padding) * image_height;
+
+	while(srcptr < endmem)
+	{
+		endline = srcptr + linelen;
+
+		while(srcptr < endline)
+		{
+			*destptr++ = srcptr[2];
+			*destptr++ = srcptr[1];
+			*destptr++ = srcptr[0];
+			
+			srcptr += 3;
+		}
+		
+		// Skip the pad
+		srcptr += padding;
+	}
+
+	ri.FS_WriteFile(filename, out, bufSize);
+
+	ri.Hunk_FreeTempMemory(out);
+}
+
+void RE_SaveTGA_EXT(char * filename, int image_width, int image_height, int bytesPerPixel, byte *image_buffer, int padding) {
+	byte *srcptr, *destptr;
+	byte *endline, *endmem;
+	byte *out;
+	size_t bufSize;
+	int linelen;
+
+	if ( bytesPerPixel != 3 && bytesPerPixel != 4 ) {
+		Com_Error( ERR_DROP, "RE_SaveTGA: Unsupported bytes per pixel (%d)\n", bytesPerPixel );
+	}
+
+	bufSize = image_width * image_height * bytesPerPixel + 18;
+	out = ri.Hunk_AllocateTempMemory(bufSize);
+
+	Com_Memset (out, 0, 18);
+	out[2] = 2;		// uncompressed type
+	out[12] = image_width & 255;
+	out[13] = image_width >> 8;
+	out[14] = image_height & 255;
+	out[15] = image_height >> 8;
+	out[16] = bytesPerPixel*8;	// pixel size
+
+	// swap rgb to bgr and remove padding from line endings
+	linelen = image_width * bytesPerPixel;
+
+	srcptr = image_buffer;
+	destptr = out + 18;
+	endmem = srcptr + (linelen + padding) * image_height;
+
+	while(srcptr < endmem)
+	{
+		endline = srcptr + linelen;
+
+		while(srcptr < endline)
+		{
+			*destptr++ = srcptr[2];
+			*destptr++ = srcptr[1];
+			*destptr++ = srcptr[0];
+
+			if ( bytesPerPixel == 4 )
+				*destptr++ = srcptr[3];
+
+			srcptr += bytesPerPixel;
+		}
+		
+		// Skip the pad
+		srcptr += padding;
+	}
+
+	ri.FS_WriteFile(filename, out, bufSize);
+
+	ri.Hunk_FreeTempMemory(out);
+}
+

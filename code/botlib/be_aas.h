@@ -1,25 +1,34 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 //
+#include "aasfile.h"
 
 /*****************************************************************************
  * name:		be_aas.h
@@ -29,6 +38,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  * $Archive: /source/code/botlib/be_aas.h $
  *
  *****************************************************************************/
+
+#define MAX_EPAIRKEY 128
 
 #ifndef MAX_STRINGFIELD
 #define MAX_STRINGFIELD				80
@@ -89,63 +100,9 @@ typedef struct aas_trace_s
 	int			ent;		// entity blocking the trace
 	int			lastarea;	// last area the trace was in (zero if none)
 	int			area;		// area blocking the trace (zero if none)
-	int			planenum;	// number of the plane that was hit
+	int			planenum;	// number of the plane that was hit (zero if none or hit entity) // ZTM: FIXME: Is zero ever a valid value?
+	aas_plane_t	plane;		// surface normal at impact, transformed to world space
 } aas_trace_t;
-
-/* Defined in botlib.h
-
-//bsp_trace_t hit surface
-typedef struct bsp_surface_s
-{
-	char name[16];
-	int flags;
-	int value;
-} bsp_surface_t;
-
-//a trace is returned when a box is swept through the BSP world
-typedef struct bsp_trace_s
-{
-	qboolean		allsolid;	// if true, plane is not valid
-	qboolean		startsolid;	// if true, the initial point was in a solid area
-	float			fraction;	// time completed, 1.0 = didn't hit anything
-	vec3_t			endpos;		// final position
-	cplane_t		plane;		// surface normal at impact
-	float			exp_dist;	// expanded plane distance
-	int				sidenum;	// number of the brush side hit
-	bsp_surface_t	surface;	// hit surface
-	int				contents;	// contents on other side of surface hit
-	int				ent;		// number of entity hit
-} bsp_trace_t;
-//
-*/
-
-//entity info
-typedef struct aas_entityinfo_s
-{
-	int		valid;			// true if updated this frame
-	int		type;			// entity type
-	int		flags;			// entity flags
-	float	ltime;			// local time
-	float	update_time;	// time between last and current update
-	int		number;			// number of the entity
-	vec3_t	origin;			// origin of the entity
-	vec3_t	angles;			// angles of the model
-	vec3_t	old_origin;		// for lerping
-	vec3_t	lastvisorigin;	// last visible origin
-	vec3_t	mins;			// bounding box minimums
-	vec3_t	maxs;			// bounding box maximums
-	int		groundent;		// ground entity
-	int		solid;			// solid type
-	int		modelindex;		// model used
-	int		modelindex2;	// weapons, CTF flags, etc
-	int		frame;			// model frame number
-	int		event;			// impulse events -- muzzle flashes, footsteps, etc
-	int		eventParm;		// even parameter
-	int		powerups;		// bit flags
-	int		weapon;			// determines weapon and flash model, etc
-	int		legsAnim;		// mask off ANIM_TOGGLEBIT
-	int		torsoAnim;		// mask off ANIM_TOGGLEBIT
-} aas_entityinfo_t;
 
 // area info
 typedef struct aas_areainfo_s

@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 // tr_light.c
@@ -52,6 +60,49 @@ void R_TransformDlights( int count, dlight_t *dl, orientationr_t *or) {
 }
 
 /*
+===============
+R_CullDlights
+
+Frustum culls dynamic lights
+===============
+*/
+void R_CullDlights( void ) {
+#if 1 // ZTM: FIXME: hack to fix flickering with r_dlightMap 3
+	if ( tr.refdef.num_dlights > MAX_DLIGHTS ) {
+		tr.refdef.num_dlights = MAX_DLIGHTS;
+	}
+
+	tr.refdef.dlightBits = ( 1ULL << tr.refdef.num_dlights ) - 1;
+#else
+	int i, numDlights, dlightBits;
+	dlight_t    *dl;
+
+
+	/* limit */
+	if ( tr.refdef.num_dlights > MAX_DLIGHTS ) {
+		tr.refdef.num_dlights = MAX_DLIGHTS;
+	}
+
+	/* walk dlight list */
+	numDlights = 0;
+	dlightBits = 0;
+	for ( i = 0, dl = tr.refdef.dlights; i < tr.refdef.num_dlights; i++, dl++ )
+	{
+		if ( ( dl->flags & REF_DIRECTED_DLIGHT ) || R_CullPointAndRadius( dl->origin, dl->radius ) != CULL_OUT ) {
+			numDlights = i + 1;
+			dlightBits |= ( 1 << i );
+		}
+	}
+
+	/* reset count */
+	tr.refdef.num_dlights = numDlights;
+
+	/* set bits */
+	tr.refdef.dlightBits = dlightBits;
+#endif
+}
+
+/*
 =============
 R_DlightBmodel
 
@@ -71,24 +122,27 @@ void R_DlightBmodel( bmodel_t *bmodel ) {
 	for ( i=0 ; i<tr.refdef.num_dlights ; i++ ) {
 		dl = &tr.refdef.dlights[i];
 
-		// see if the point is close enough to the bounds to matter
-		for ( j = 0 ; j < 3 ; j++ ) {
-			if ( dl->transformed[j] - bmodel->bounds[1][j] > dl->radius ) {
-				break;
+		// parallel dlights affect all entities
+		if ( !( dl->flags & REF_DIRECTED_DLIGHT ) ) {
+			// see if the point is close enough to the bounds to matter
+			for ( j = 0 ; j < 3 ; j++ ) {
+				if ( dl->transformed[j] - bmodel->bounds[1][j] > dl->radius ) {
+					break;
+				}
+				if ( bmodel->bounds[0][j] - dl->transformed[j] > dl->radius ) {
+					break;
+				}
 			}
-			if ( bmodel->bounds[0][j] - dl->transformed[j] > dl->radius ) {
-				break;
+			if ( j < 3 ) {
+				continue;
 			}
-		}
-		if ( j < 3 ) {
-			continue;
 		}
 
 		// we need to check this light
 		mask |= 1 << i;
 	}
 
-	tr.currentEntity->needDlights = (mask != 0);
+	tr.currentEntity->needDlights = mask;
 
 	// set the dlight bits in all the surfaces
 	for ( i = 0 ; i < bmodel->numSurfaces ; i++ ) {
@@ -100,6 +154,10 @@ void R_DlightBmodel( bmodel_t *bmodel ) {
 			case SF_GRID:
 			case SF_TRIANGLES:
 				((srfBspSurface_t *)surf->data)->dlightBits = mask;
+				break;
+
+			case SF_FOLIAGE:
+				((srfFoliage_t *)surf->data)->dlightBits = mask;
 				break;
 
 			default:
@@ -131,11 +189,14 @@ static void R_SetupEntityLightingGrid( trRefEntity_t *ent, world_t *world ) {
 	vec3_t	lightOrigin;
 	int		pos[3];
 	int		i, j;
-	byte	*gridData;
+	int		gridIndex;
 	float	frac[3];
 	int		gridStep[3];
 	vec3_t	direction;
 	float	totalFactor;
+
+	if ( ( ent->e.renderfx & RF_CONST_AMBIENT ) && ( ent->e.renderfx & RF_NO_DIRECTED_LIGHT ) )
+		return;
 
 	if ( ent->e.renderfx & RF_LIGHTING_ORIGIN ) {
 		// separate lightOrigins are needed so an object that is
@@ -167,11 +228,10 @@ static void R_SetupEntityLightingGrid( trRefEntity_t *ent, world_t *world ) {
 	assert( world->lightGridData ); // NULL with -nolight maps
 
 	// trilerp the light value
-	gridStep[0] = 8;
-	gridStep[1] = 8 * world->lightGridBounds[0];
-	gridStep[2] = 8 * world->lightGridBounds[0] * world->lightGridBounds[1];
-	gridData = world->lightGridData + pos[0] * gridStep[0]
-		+ pos[1] * gridStep[1] + pos[2] * gridStep[2];
+	gridStep[0] = 1;
+	gridStep[1] = world->lightGridBounds[0];
+	gridStep[2] = world->lightGridBounds[0] * world->lightGridBounds[1];
+	gridIndex = pos[0] * gridStep[0] + pos[1] * gridStep[1] + pos[2] * gridStep[2];
 
 	totalFactor = 0;
 	for ( i = 0 ; i < 8 ; i++ ) {
@@ -179,18 +239,19 @@ static void R_SetupEntityLightingGrid( trRefEntity_t *ent, world_t *world ) {
 		byte	*data;
 		int		lat, lng;
 		vec3_t	normal;
+		int		index;
 		#if idppc
 		float d0, d1, d2, d3, d4, d5;
 		#endif
 		factor = 1.0;
-		data = gridData;
+		index = gridIndex;
 		for ( j = 0 ; j < 3 ; j++ ) {
 			if ( i & (1<<j) ) {
 				if ( pos[j] + 1 > world->lightGridBounds[j] - 1 ) {
 					break; // ignore values outside lightgrid
 				}
 				factor *= frac[j];
-				data += gridStep[j];
+				index += gridStep[j];
 			} else {
 				factor *= (1.0f - frac[j]);
 			}
@@ -200,10 +261,16 @@ static void R_SetupEntityLightingGrid( trRefEntity_t *ent, world_t *world ) {
 			continue;
 		}
 
+		if ( world->lightGridArray ) {
+			index = world->lightGridArray[index];
+		}
+
+		data = world->lightGridData + index * 8;
+
 		if (world->lightGrid16)
 		{
-			uint16_t *data16 = world->lightGrid16 + (int)(data - world->lightGridData) / 8 * 6;
-			if (!(data16[0]+data16[1]+data16[2]+data16[3]+data16[4]+data16[5])) {
+			uint16_t *data16 = world->lightGrid16 + index * 6;
+			if (!(data16[0]+data16[1]+data16[2]+data16[3]+data16[4]+data16[5]) ) {
 				continue;	// ignore samples in walls
 			}
 		}
@@ -228,8 +295,7 @@ static void R_SetupEntityLightingGrid( trRefEntity_t *ent, world_t *world ) {
 		#else
 		if (world->lightGrid16)
 		{
-			// FIXME: this is hideous
-			uint16_t *data16 = world->lightGrid16 + (int)(data - world->lightGridData) / 8 * 6;
+			uint16_t *data16 = world->lightGrid16 + index * 6;
 
 			ent->ambientLight[0] += factor * data16[0] / 257.0f;
 			ent->ambientLight[1] += factor * data16[1] / 257.0f;
@@ -275,6 +341,13 @@ static void R_SetupEntityLightingGrid( trRefEntity_t *ent, world_t *world ) {
 	VectorScale( ent->ambientLight, r_ambientScale->value, ent->ambientLight );
 	VectorScale( ent->directedLight, r_directedScale->value, ent->directedLight );
 
+	if ( tr.lightGridMulAmbient ) {
+		VectorScale( ent->ambientLight, tr.lightGridMulAmbient, ent->ambientLight );
+	}
+	if ( tr.lightGridMulDirected ) {
+		VectorScale( ent->directedLight, tr.lightGridMulDirected, ent->directedLight );
+	}
+
 	VectorNormalize2( direction, ent->lightDir );
 }
 
@@ -287,7 +360,8 @@ LogLight
 static void LogLight( trRefEntity_t *ent ) {
 	int	max1, max2;
 
-	if ( !(ent->e.renderfx & RF_FIRST_PERSON ) ) {
+	// Only first person weapon
+	if (!(ent->e.renderfx & RF_DEPTHHACK) || !(ent->e.renderfx & RF_NO_MIRROR)) {
 		return;
 	}
 
@@ -319,7 +393,7 @@ by the Calc_* functions
 void R_SetupEntityLighting( const trRefdef_t *refdef, trRefEntity_t *ent ) {
 	int				i;
 	dlight_t		*dl;
-	float			power;
+	float			modulate;
 	vec3_t			dir;
 	float			d;
 	vec3_t			lightDir;
@@ -344,7 +418,9 @@ void R_SetupEntityLighting( const trRefdef_t *refdef, trRefEntity_t *ent ) {
 	}
 
 	// if NOWORLDMODEL, only use dynamic lights (menu system, etc)
-	if ( !(refdef->rdflags & RDF_NOWORLDMODEL ) 
+	// unless the model specifies lighting grid
+	if ( ( !( refdef->rdflags & RDF_NOWORLDMODEL )
+		|| ( ent->e.renderfx & RF_LIGHTING_GRID ) )
 		&& tr.world->lightGridData ) {
 		R_SetupEntityLightingGrid( ent, tr.world );
 	} else {
@@ -355,33 +431,69 @@ void R_SetupEntityLighting( const trRefdef_t *refdef, trRefEntity_t *ent ) {
 		VectorCopy( tr.sunDirection, ent->lightDir );
 	}
 
-	// bonus items and view weapons have a fixed minimum add
-	if ( 1 /* ent->e.renderfx & RF_MINLIGHT */ ) {
-		// give everything a minimum light add
-		ent->ambientLight[0] += tr.identityLight * 32;
-		ent->ambientLight[1] += tr.identityLight * 32;
-		ent->ambientLight[2] += tr.identityLight * 32;
+	// only use ambient light from refent
+	if ( ent->e.renderfx & RF_CONST_AMBIENT ) {
+		VectorClear( ent->ambientLight );
 	}
 
-	//
-	// modify the light by dynamic lights
-	//
-	d = VectorLength( ent->directedLight );
-	VectorScale( ent->lightDir, d, lightDir );
+	// add ambient light from refent
+	for ( i = 0; i < 3; i++ ) {
+		ent->ambientLight[i] += tr.identityLight * Com_Clamp( -255, 255, ent->e.ambientLight[i] );
 
-	for ( i = 0 ; i < refdef->num_dlights ; i++ ) {
-		dl = &refdef->dlights[i];
-		VectorSubtract( dl->origin, lightOrigin, dir );
-		d = VectorNormalize( dir );
-
-		power = DLIGHT_AT_RADIUS * ( dl->radius * dl->radius );
-		if ( d < DLIGHT_MINIMUM_RADIUS ) {
-			d = DLIGHT_MINIMUM_RADIUS;
+		if ( ent->ambientLight[i] < 0 ) {
+			ent->ambientLight[i] = 0;
 		}
-		d = power / ( d * d );
+	}
 
-		VectorMA( ent->directedLight, d, dl->color, ent->directedLight );
-		VectorMA( lightDir, d, dir, lightDir );
+	if ( ent->e.renderfx & RF_NO_DIRECTED_LIGHT ) {
+		VectorClear( ent->directedLight );
+		VectorClear( lightDir );
+	} else {
+		//
+		// modify the light by dynamic lights
+		//
+		d = VectorLength( ent->directedLight );
+		VectorScale( ent->lightDir, d, lightDir );
+
+		for ( i = 0 ; i < refdef->num_dlights ; i++ ) {
+			dl = &refdef->dlights[i];
+
+			if ( !( dl->flags & REF_GRID_DLIGHT ) ) {
+				continue;
+			}
+
+			// directional dlight, origin is a directional normal
+			if ( dl->flags & REF_DIRECTED_DLIGHT ) {
+				modulate = dl->intensity * 255.0;
+				VectorCopy( dl->origin, dir );
+			}
+			// ET dlight
+			else if ( dl->flags & REF_VERTEX_DLIGHT )
+			{
+				VectorSubtract( dl->origin, lightOrigin, dir );
+				d = dl->radius - VectorNormalize( dir );
+				if ( d <= 0.0 ) {
+					modulate = 0;
+				} else {
+					modulate = dl->intensity * d;
+				}
+			}
+			// Q3 dlight
+			else
+			{
+				VectorSubtract( dl->origin, lightOrigin, dir );
+				d = VectorNormalize( dir );
+				modulate = DLIGHT_AT_RADIUS * ( dl->radius * dl->radius );
+				if ( d < DLIGHT_MINIMUM_RADIUS ) {
+					d = DLIGHT_MINIMUM_RADIUS;
+				}
+
+				modulate = modulate / ( d * d ) * dl->intensity;
+			}
+
+			VectorMA( ent->directedLight, modulate, dl->color, ent->directedLight );
+			VectorMA( lightDir, modulate, dir, lightDir );
+		}
 	}
 
 	// clamp lights

@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 
@@ -49,6 +57,7 @@ void ProjectDlightTexture_altivec( void ) {
                                                0x00, 0x00, 0x00, 0xff);
 	float	*texCoords;
 	byte	*colors;
+	int		*intColors;
 	byte	clipBits[SHADER_MAX_VERTEXES];
 	float	texCoordsArray[SHADER_MAX_VERTEXES][2];
 	byte	colorArray[SHADER_MAX_VERTEXES][4];
@@ -56,8 +65,11 @@ void ProjectDlightTexture_altivec( void ) {
 	int		numIndexes;
 	float	scale;
 	float	radius;
+	float	radiusInverseCubed;
+	float	intensity, remainder;
 	vec3_t	floatColor;
 	float	modulate = 0.0f;
+	qboolean vertexLight;
 
 	if ( !backEnd.refdef.num_dlights ) {
 		return;
@@ -76,6 +88,10 @@ void ProjectDlightTexture_altivec( void ) {
 		if ( !( tess.dlightBits & ( 1 << l ) ) ) {
 			continue;	// this surface definitely doesn't have any of this light
 		}
+
+		// clear colors
+		Com_Memset( colorArray, 0, sizeof( colorArray ) );
+
 		texCoords = texCoordsArray[0];
 		colors = colorArray[0];
 
@@ -85,6 +101,17 @@ void ProjectDlightTexture_altivec( void ) {
 		origin2 = dl->transformed[2];
 		radius = dl->radius;
 		scale = 1.0f / radius;
+		radiusInverseCubed = dl->radiusInverseCubed;
+		intensity = dl->intensity;
+
+		vertexLight = ( ( dl->flags & REF_DIRECTED_DLIGHT ) || ( dl->flags & REF_VERTEX_DLIGHT ) );
+
+		// directional lights have max intensity and washout remainder intensity
+		if ( dl->flags & REF_DIRECTED_DLIGHT ) {
+			remainder = intensity * 0.125;
+		} else {
+			remainder = 0.0f;
+		}
 
 		if(r_greyscale->integer)
 		{
@@ -121,47 +148,89 @@ void ProjectDlightTexture_altivec( void ) {
 
 			backEnd.pc.c_dlightVertexes++;
 
-			texCoords0 = 0.5f + dist0 * scale;
-			texCoords1 = 0.5f + dist1 * scale;
-
-			if( !r_dlightBacks->integer &&
-					// dist . tess.normal[i]
-					( dist0 * tess.normal[i][0] +
-					dist1 * tess.normal[i][1] +
-					dist2 * tess.normal[i][2] ) < 0.0f ) {
-				clip = 63;
-			} else {
-				if ( texCoords0 < 0.0f ) {
-					clip |= 1;
-				} else if ( texCoords0 > 1.0f ) {
-					clip |= 2;
+			// directional dlight, origin is a directional normal
+			if ( dl->flags & REF_DIRECTED_DLIGHT ) {
+				// twosided surfaces use absolute value of the calculated lighting
+				modulate = intensity * DotProduct( dl->origin, tess.normal[ i ] );
+				if ( tess.shader->cullType == CT_TWO_SIDED ) {
+					modulate = fabs( modulate );
 				}
-				if ( texCoords1 < 0.0f ) {
-					clip |= 4;
-				} else if ( texCoords1 > 1.0f ) {
-					clip |= 8;
-				}
-				texCoords[0] = texCoords0;
-				texCoords[1] = texCoords1;
+				modulate += remainder;
+			}
+			// spherical vertex lit dlight
+			else if ( dl->flags & REF_VERTEX_DLIGHT )
+			{
+				vec3_t	dir;
 
-				// modulate the strength based on the height and color
-				if ( dist2 > radius ) {
-					clip |= 16;
-					modulate = 0.0f;
-				} else if ( dist2 < -radius ) {
-					clip |= 32;
-					modulate = 0.0f;
+				dir[ 0 ] = radius - fabs( dist0 );
+				if ( dir[ 0 ] <= 0.0f ) {
+					continue;
+				}
+				dir[ 1 ] = radius - fabs( dist1 );
+				if ( dir[ 1 ] <= 0.0f ) {
+					continue;
+				}
+				dir[ 2 ] = radius - fabs( dist2 );
+				if ( dir[ 2 ] <= 0.0f ) {
+					continue;
+				}
+
+				modulate = intensity * dir[ 0 ] * dir[ 1 ] * dir[ 2 ] * radiusInverseCubed;
+			}
+			// vertical cylinder dlight
+			else
+			{
+				texCoords0 = 0.5f + dist0 * scale;
+				texCoords1 = 0.5f + dist1 * scale;
+
+				if( !r_dlightBacks->integer &&
+						// dist . tess.normal[i]
+						( dist0 * tess.normal[i][0] +
+						dist1 * tess.normal[i][1] +
+						dist2 * tess.normal[i][2] ) < 0.0f ) {
+					clip = 63;
 				} else {
-					dist2 = Q_fabs(dist2);
-					if ( dist2 < radius * 0.5f ) {
-						modulate = 1.0f;
+					if ( texCoords0 < 0.0f ) {
+						clip |= 1;
+					} else if ( texCoords0 > 1.0f ) {
+						clip |= 2;
+					}
+					if ( texCoords1 < 0.0f ) {
+						clip |= 4;
+					} else if ( texCoords1 > 1.0f ) {
+						clip |= 8;
+					}
+					texCoords[0] = texCoords0;
+					texCoords[1] = texCoords1;
+
+					// modulate the strength based on the height and color
+					if ( dist2 > radius ) {
+						clip |= 16;
+						modulate = 0.0f;
+					} else if ( dist2 < -radius ) {
+						clip |= 32;
+						modulate = 0.0f;
 					} else {
-						modulate = 2.0f * (radius - dist2) * scale;
+						dist2 = Q_fabs(dist2);
+						if ( dist2 < radius * 0.5f ) {
+							modulate = intensity;
+						} else {
+							modulate = intensity * 2.0f * (radius - dist2) * scale;
+						}
 					}
 				}
 			}
 			clipBits[i] = clip;
 
+			// optimizations
+			if ( vertexLight && modulate < ( 1.0f / 128.0f ) ) {
+				continue;
+			} else if ( modulate > 1.0f ) {
+				modulate = 1.0f;
+			}
+
+			// ZTM: FIXME: should probably clamp to 0-255 range before converting to char,
+			// but I don't know how to do altvec stuff or if it's even used anymore
 			modulateVec = vec_ld(0,(float *)&modulate);
 			modulateVec = vec_perm(modulateVec,modulateVec,modulatePerm);
 			colorVec = vec_madd(floatColorVec0,modulateVec,zero);
@@ -173,6 +242,7 @@ void ProjectDlightTexture_altivec( void ) {
 		}
 
 		// build a list of triangles that need light
+		intColors = (int*) colorArray;
 		numIndexes = 0;
 		for ( i = 0 ; i < tess.numIndexes ; i += 3 ) {
 			int		a, b, c;
@@ -180,8 +250,14 @@ void ProjectDlightTexture_altivec( void ) {
 			a = tess.indexes[i];
 			b = tess.indexes[i+1];
 			c = tess.indexes[i+2];
-			if ( clipBits[a] & clipBits[b] & clipBits[c] ) {
-				continue;	// not lighted
+			if ( vertexLight ) {
+				if ( !( intColors[ a ] | intColors[ b ] | intColors[ c ] ) ) {
+					continue;
+				}
+			} else {
+				if ( clipBits[a] & clipBits[b] & clipBits[c] ) {
+					continue;	// not lighted
+				}
 			}
 			hitIndexes[numIndexes] = a;
 			hitIndexes[numIndexes+1] = b;
@@ -193,24 +269,47 @@ void ProjectDlightTexture_altivec( void ) {
 			continue;
 		}
 
-		qglEnableClientState( GL_TEXTURE_COORD_ARRAY );
-		qglTexCoordPointer( 2, GL_FLOAT, 0, texCoordsArray[0] );
+		if ( !vertexLight ) {
+			qglEnableClientState( GL_TEXTURE_COORD_ARRAY );
+			qglTexCoordPointer( 2, GL_FLOAT, 0, texCoordsArray[0] );
+		} else {
+			qglDisableClientState( GL_TEXTURE_COORD_ARRAY );
+		}
 
 		qglEnableClientState( GL_COLOR_ARRAY );
 		qglColorPointer( 4, GL_UNSIGNED_BYTE, 0, colorArray );
 
-		GL_Bind( tr.dlightImage );
-		// include GLS_DEPTHFUNC_EQUAL so alpha tested surfaces don't add light
-		// where they aren't rendered
-		if ( dl->additive ) {
-			GL_State( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE | GLS_DEPTHFUNC_EQUAL );
+		if ( dl->dlshader ) {
+			shader_t *dls = dl->dlshader;
+
+			for ( i = 0; i < dls->numUnfoggedPasses; i++ ) {
+				shaderStage_t *stage = dls->stages[i];
+				R_BindAnimatedImage( &dls->stages[i]->bundle[0] );
+				GL_State( stage->stateBits | GLS_DEPTHFUNC_EQUAL );
+				R_DrawElements( numIndexes, hitIndexes );
+				backEnd.pc.c_totalIndexes += numIndexes;
+				backEnd.pc.c_dlightIndexes += numIndexes;
+			}
+		} else {
+			R_FogOff();
+			if ( !vertexLight ) {
+				GL_Bind( tr.dlightImage );
+			} else {
+				GL_Bind( tr.whiteImage );
+			}
+			// include GLS_DEPTHFUNC_EQUAL so alpha tested surfaces don't add light
+			// where they aren't rendered
+			if ( dl->flags & REF_ADDITIVE_DLIGHT ) {
+				GL_State( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE | GLS_DEPTHFUNC_EQUAL );
+			}
+			else {
+				GL_State( GLS_SRCBLEND_DST_COLOR | GLS_DSTBLEND_ONE | GLS_DEPTHFUNC_EQUAL );
+			}
+			R_DrawElements( numIndexes, hitIndexes );
+			backEnd.pc.c_totalIndexes += numIndexes;
+			backEnd.pc.c_dlightIndexes += numIndexes;
+			RB_FogOn();
 		}
-		else {
-			GL_State( GLS_SRCBLEND_DST_COLOR | GLS_DSTBLEND_ONE | GLS_DEPTHFUNC_EQUAL );
-		}
-		R_DrawElements( numIndexes, hitIndexes );
-		backEnd.pc.c_totalIndexes += numIndexes;
-		backEnd.pc.c_dlightIndexes += numIndexes;
 	}
 }
 

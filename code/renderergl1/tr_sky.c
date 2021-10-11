@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 // tr_sky.c
@@ -309,6 +317,17 @@ static void MakeSkyVec( float s, float t, int axis, float outSt[2], vec3_t outXY
 	float	boxSize;
 
 	boxSize = backEnd.viewParms.zFar / 1.75;		// div sqrt(3)
+
+	// use custom size, but make sure the sky is not far clipped
+	if ( tr.skyFogDepthForOpaque > 0 && tr.skyFogDepthForOpaque < boxSize ) {
+		boxSize = tr.skyFogDepthForOpaque;
+	}
+
+	// make sure the sky is not near clipped
+	if ( boxSize < r_znear->value * 2.0 ) {
+		boxSize = r_znear->value * 2.0;
+	}
+
 	b[0] = s*boxSize;
 	b[1] = t*boxSize;
 	b[2] = boxSize;
@@ -463,6 +482,8 @@ static void FillCloudySkySide( const int mins[2], const int maxs[2], qboolean ad
 	tHeight = maxs[1] - mins[1] + 1;
 	sWidth = maxs[0] - mins[0] + 1;
 
+	RB_CHECKOVERFLOW( ( maxs[ 0 ] - mins[ 0 ] ) * ( maxs[ 1 ] - mins[ 1 ] ), ( sWidth - 1 ) * ( tHeight - 1 ) * 6 );
+
 	for ( t = mins[1]+HALF_SKY_SUBDIVISIONS; t <= maxs[1]+HALF_SKY_SUBDIVISIONS; t++ )
 	{
 		for ( s = mins[0]+HALF_SKY_SUBDIVISIONS; s <= maxs[0]+HALF_SKY_SUBDIVISIONS; s++ )
@@ -604,7 +625,7 @@ static void FillCloudBox( const shader_t *shader, int stage )
 */
 void R_BuildCloudData( shaderCommands_t *input )
 {
-	int			i;
+	//int			i;
 	shader_t	*shader;
 
 	shader = input->shader;
@@ -620,6 +641,11 @@ void R_BuildCloudData( shaderCommands_t *input )
 
 	if ( shader->sky.cloudHeight )
 	{
+		// From WolfET:
+		// ok, this is really wierd. it's iterating through shader stages here,
+		// which is unnecessary for a multi-stage sky shader, as far as i can tell
+		// nuking this
+#if 0
 		for ( i = 0; i < MAX_SHADER_STAGES; i++ )
 		{
 			if ( !tess.xstages[i] ) {
@@ -627,6 +653,9 @@ void R_BuildCloudData( shaderCommands_t *input )
 			}
 			FillCloudBox( shader, i );
 		}
+#else
+		FillCloudBox( shader, 0 );
+#endif
 	}
 }
 
@@ -746,6 +775,12 @@ Other things could be stuck in here, like birds in the sky, etc
 */
 void RB_StageIteratorSky( void ) {
 	if ( r_fastsky->integer ) {
+		return;
+	}
+
+	// RTCW doesn't draw sky if world/water global fog is linear (they use clip plane).
+	// Skies are drawn in sky box refdefs that use linear fog (they do not use clip plane).
+	if ( !r_globalLinearFogDrawSky->integer && backEnd.refdef.fogType == FT_LINEAR && backEnd.refdef.maxFarClip > 1 ) {
 		return;
 	}
 

@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 
@@ -31,10 +39,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "../qcommon/q_shared.h"
 #include "l_memory.h"
-#include "l_script.h"
-#include "l_precomp.h"
-#include "l_struct.h"
-#include "l_libvar.h"
 #include "aasfile.h"
 #include "botlib.h"
 #include "be_aas.h"
@@ -544,7 +548,6 @@ void AAS_DrawCross(vec3_t origin, float size, int color)
 //===========================================================================
 void AAS_PrintTravelType(int traveltype)
 {
-#ifdef DEBUG
 	char *str;
 	//
 	switch(traveltype & TRAVELTYPE_MASK)
@@ -563,12 +566,16 @@ void AAS_PrintTravelType(int traveltype)
 		case TRAVEL_ROCKETJUMP: str = "TRAVEL_ROCKETJUMP"; break;
 		case TRAVEL_BFGJUMP: str = "TRAVEL_BFGJUMP"; break;
 		case TRAVEL_GRAPPLEHOOK: str = "TRAVEL_GRAPPLEHOOK"; break;
+		case TRAVEL_DOUBLEJUMP: str = "TRAVEL_DOUBLEJUMP"; break;
+		case TRAVEL_RAMPJUMP: str = "TRAVEL_RAMPJUMP"; break;
+		case TRAVEL_STRAFEJUMP: str = "TRAVEL_STRAFEJUMP"; break;
 		case TRAVEL_JUMPPAD: str = "TRAVEL_JUMPPAD"; break;
 		case TRAVEL_FUNCBOB: str = "TRAVEL_FUNCBOB"; break;
-		default: str = "UNKNOWN TRAVEL TYPE"; break;
+		default:
+			botimport.Print(PRT_MESSAGE, S_COLOR_RED "UNKNOWN TRAVEL TYPE (%d)" S_COLOR_WHITE, (traveltype & TRAVELTYPE_MASK));
+			return;
 	} //end switch
 	botimport.Print(PRT_MESSAGE, "%s", str);
-#endif
 } //end of the function AAS_PrintTravelType
 //===========================================================================
 //
@@ -602,7 +609,7 @@ void AAS_DrawArrow(vec3_t start, vec3_t end, int linecolor, int arrowcolor)
 // Returns:					-
 // Changes Globals:		-
 //===========================================================================
-void AAS_ShowReachability(aas_reachability_t *reach)
+void AAS_ShowReachability(aas_reachability_t *reach, int contentmask)
 {
 	vec3_t dir, cmdmove, velocity;
 	float speed, zvel;
@@ -626,20 +633,21 @@ void AAS_ShowReachability(aas_reachability_t *reach)
 		VectorClear(cmdmove);
 		cmdmove[2] = aassettings.phys_jumpvel;
 		//
-		AAS_PredictClientMovement(&move, -1, reach->start, PRESENCE_NORMAL, qtrue,
+		AAS_PredictPlayerMovement(&move, -1, reach->start, PRESENCE_NORMAL, qtrue,
 									velocity, cmdmove, 3, 30, 0.1f,
 									SE_HITGROUND|SE_ENTERWATER|SE_ENTERSLIME|
-									SE_ENTERLAVA|SE_HITGROUNDDAMAGE, 0, qtrue);
+									SE_ENTERLAVA|SE_HITGROUNDDAMAGE,
+									0, qtrue, contentmask);
 		//
 		if ((reach->traveltype & TRAVELTYPE_MASK) == TRAVEL_JUMP)
 		{
-			AAS_JumpReachRunStart(reach, dir);
+			AAS_JumpReachRunStart(reach, dir, contentmask);
 			AAS_DrawCross(dir, 4, LINECOLOR_BLUE);
 		} //end if
 	} //end if
 	else if ((reach->traveltype & TRAVELTYPE_MASK) == TRAVEL_ROCKETJUMP)
 	{
-		zvel = AAS_RocketJumpZVelocity(reach->start);
+		zvel = AAS_RocketJumpZVelocity(reach->start, contentmask);
 		AAS_HorizontalVelocityForJump(zvel, reach->start, reach->end, &speed);
 		//
 		VectorSubtract(reach->end, reach->start, dir);
@@ -649,11 +657,12 @@ void AAS_ShowReachability(aas_reachability_t *reach)
 		VectorScale(dir, speed, cmdmove);
 		VectorSet(velocity, 0, 0, zvel);
 		//
-		AAS_PredictClientMovement(&move, -1, reach->start, PRESENCE_NORMAL, qtrue,
+		AAS_PredictPlayerMovement(&move, -1, reach->start, PRESENCE_NORMAL, qtrue,
 									velocity, cmdmove, 30, 30, 0.1f,
 									SE_ENTERWATER|SE_ENTERSLIME|
 									SE_ENTERLAVA|SE_HITGROUNDDAMAGE|
-									SE_TOUCHJUMPPAD|SE_HITGROUNDAREA, reach->areanum, qtrue);
+									SE_TOUCHJUMPPAD|SE_HITGROUNDAREA,
+									reach->areanum, qtrue, contentmask);
 	} //end else if
 	else if ((reach->traveltype & TRAVELTYPE_MASK) == TRAVEL_JUMPPAD)
 	{
@@ -668,11 +677,12 @@ void AAS_ShowReachability(aas_reachability_t *reach)
 		//NOTE: the facenum is the Z velocity
 		velocity[2] = reach->facenum;
 		//
-		AAS_PredictClientMovement(&move, -1, reach->start, PRESENCE_NORMAL, qtrue,
+		AAS_PredictPlayerMovement(&move, -1, reach->start, PRESENCE_NORMAL, qtrue,
 									velocity, cmdmove, 30, 30, 0.1f,
 									SE_ENTERWATER|SE_ENTERSLIME|
 									SE_ENTERLAVA|SE_HITGROUNDDAMAGE|
-									SE_TOUCHJUMPPAD|SE_HITGROUNDAREA, reach->areanum, qtrue);
+									SE_TOUCHJUMPPAD|SE_HITGROUNDAREA,
+									reach->areanum, qtrue, contentmask);
 	} //end else if
 } //end of the function AAS_ShowReachability
 //===========================================================================
@@ -681,7 +691,7 @@ void AAS_ShowReachability(aas_reachability_t *reach)
 // Returns:					-
 // Changes Globals:		-
 //===========================================================================
-void AAS_ShowReachableAreas(int areanum)
+void AAS_ShowReachableAreas(int areanum, int contentmask)
 {
 	aas_areasettings_t *settings;
 	static aas_reachability_t reach;
@@ -707,8 +717,8 @@ void AAS_ShowReachableAreas(int areanum)
 		AAS_PrintTravelType(reach.traveltype & TRAVELTYPE_MASK);
 		botimport.Print(PRT_MESSAGE, "\n");
 	} //end if
-	AAS_ShowReachability(&reach);
-} //end of the function ShowReachableAreas
+	AAS_ShowReachability(&reach, contentmask);
+} //end of the function AAS_ShowReachableAreas
 
 void AAS_FloodAreas_r(int areanum, int cluster, int *done)
 {

@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 // vm.c -- virtual machine
@@ -35,6 +43,8 @@ and one exported function: Perform
 
 #include "vm_local.h"
 
+cvar_t	*vm_cgameHeapMegs;
+cvar_t	*vm_gameHeapMegs;
 
 vm_t	*currentVM = NULL;
 vm_t	*lastVM    = NULL;
@@ -70,9 +80,13 @@ VM_Init
 ==============
 */
 void VM_Init( void ) {
-	Cvar_Get( "vm_cgame", "2", CVAR_ARCHIVE );	// !@# SHIP WITH SET TO 2
-	Cvar_Get( "vm_game", "2", CVAR_ARCHIVE );	// !@# SHIP WITH SET TO 2
-	Cvar_Get( "vm_ui", "2", CVAR_ARCHIVE );		// !@# SHIP WITH SET TO 2
+	Cvar_Get( "vm_cgame", "0", CVAR_ARCHIVE );
+	Cvar_Get( "vm_game", "0", CVAR_ARCHIVE );
+
+	vm_cgameHeapMegs = Cvar_Get( "vm_cgameHeapMegs", "2", CVAR_ARCHIVE );
+	vm_gameHeapMegs = Cvar_Get( "vm_gameHeapMegs", "24", CVAR_ARCHIVE );
+	Cvar_CheckRange( vm_cgameHeapMegs, 0, 128, qtrue );
+	Cvar_CheckRange( vm_gameHeapMegs, 0, 128, qtrue );
 
 	Cmd_AddCommand ("vmprofile", VM_VmProfile_f );
 	Cmd_AddCommand ("vminfo", VM_VmInfo_f );
@@ -355,6 +369,59 @@ intptr_t QDECL VM_DllSyscall( intptr_t arg, ... ) {
 #endif
 }
 
+/*
+============
+VM_QvmSyscall
+
+QVM bytecode interpreters call this when QVM makes a system call
+============
+*/
+intptr_t VM_QvmSyscall( intptr_t *args ) {
+	switch (args[0]) {
+	case TRAP_MEMSET:
+		Com_Memset( VMA(1), args[2], args[3] );
+		return args[1];
+	case TRAP_MEMCPY:
+		Com_Memcpy( VMA(1), VMA(2), args[3] );
+		return args[1];
+	case TRAP_STRNCPY:
+		strncpy( VMA(1), VMA(2), args[3] );
+		return args[1];
+	case TRAP_SIN:
+		return FloatAsInt( sin( VMF(1) ) );
+	case TRAP_COS:
+		return FloatAsInt( cos( VMF(1) ) );
+	case TRAP_ATAN2:
+		return FloatAsInt( atan2( VMF(1), VMF(2) ) );
+	case TRAP_SQRT:
+		return FloatAsInt( sqrt( VMF(1) ) );
+	case TRAP_FLOOR:
+		return FloatAsInt( floor( VMF(1) ) );
+	case TRAP_CEIL:
+		return FloatAsInt( ceil( VMF(1) ) );
+	case TRAP_ACOS:
+		return FloatAsInt( Q_acos( VMF(1) ) );
+	case TRAP_ASIN:
+		return FloatAsInt( Q_asin( VMF(1) ) );
+	case TRAP_TAN:
+		return FloatAsInt( tan( VMF(1) ) );
+	case TRAP_ATAN:
+		return FloatAsInt( atan( VMF(1) ) );
+	case TRAP_POW:
+		return FloatAsInt( pow( VMF(1), VMF(2) ) );
+	case TRAP_EXP:
+		return FloatAsInt( exp( VMF(1) ) );
+	case TRAP_LOG:
+		return FloatAsInt( log( VMF(1) ) );
+	case TRAP_LOG10:
+		return FloatAsInt( log10( VMF(1) ) );
+	case TRAP_SYSCALL:
+		return currentVM->systemCall( &args[1] );
+	default:
+		assert(0);
+		Com_Error( ERR_DROP, "Unknown QVM-specific system call: %ld", (long int) args[0] );
+	}
+}
 
 /*
 =================
@@ -363,9 +430,10 @@ VM_LoadQVM
 Load a .qvm file
 =================
 */
-vmHeader_t *VM_LoadQVM( vm_t *vm, qboolean alloc, qboolean unpure)
+vmHeader_t *VM_LoadQVM( vm_t *vm, qboolean alloc, qboolean unpure, int heapRequestedSize)
 {
 	int					dataLength;
+	int					hunkLength;
 	int					i;
 	char				filename[MAX_QPATH];
 	union {
@@ -375,12 +443,12 @@ vmHeader_t *VM_LoadQVM( vm_t *vm, qboolean alloc, qboolean unpure)
 
 	// load the image
 	Com_sprintf( filename, sizeof(filename), "vm/%s.qvm", vm->name );
-	Com_Printf( "Loading vm file %s...\n", filename );
+	Com_DPrintf( "Loading vm file %s...\n", filename );
 
 	FS_ReadFileDir(filename, vm->searchPath, unpure, &header.v);
 
 	if ( !header.h ) {
-		Com_Printf( "Failed.\n" );
+		Com_Printf("Loading vm file %s failed.\n", filename);
 		VM_Free( vm );
 
 		Com_Printf(S_COLOR_YELLOW "Warning: Couldn't open VM file %s\n", filename);
@@ -388,12 +456,12 @@ vmHeader_t *VM_LoadQVM( vm_t *vm, qboolean alloc, qboolean unpure)
 		return NULL;
 	}
 
-	// show where the qvm was loaded from
-	FS_Which(filename, vm->searchPath);
+	if (com_developer->integer) {
+		// show where the qvm was loaded from
+		FS_Which(filename, vm->searchPath);
+	}
 
-	if( LittleLong( header.h->vmMagic ) == VM_MAGIC_VER2 ) {
-		Com_Printf( "...which has vmMagic VM_MAGIC_VER2\n" );
-
+	if( LittleLong( header.h->vmMagic ) == VM_MAGIC_VER2_NEO ) {
 		// byte swap the header
 		for ( i = 0 ; i < sizeof( vmHeader_t ) / 4 ; i++ ) {
 			((int *)header.h)[i] = LittleLong( ((int *)header.h)[i] );
@@ -412,25 +480,16 @@ vmHeader_t *VM_LoadQVM( vm_t *vm, qboolean alloc, qboolean unpure)
 			Com_Printf(S_COLOR_YELLOW "Warning: %s has bad header\n", filename);
 			return NULL;
 		}
-	} else if( LittleLong( header.h->vmMagic ) == VM_MAGIC ) {
-		// byte swap the header
-		// sizeof( vmHeader_t ) - sizeof( int ) is the 1.32b vm header size
-		for ( i = 0 ; i < ( sizeof( vmHeader_t ) - sizeof( int ) ) / 4 ; i++ ) {
-			((int *)header.h)[i] = LittleLong( ((int *)header.h)[i] );
-		}
+	} else if( LittleLong( header.h->vmMagic ) == VM_MAGIC || LittleLong( header.h->vmMagic ) == VM_MAGIC_VER2 ) {
+		Com_Printf( S_COLOR_YELLOW "Warning: Ignoring unsupported legacy qvm: " );
 
-		// validate
-		if ( header.h->bssLength < 0
-			|| header.h->dataLength < 0
-			|| header.h->litLength < 0
-			|| header.h->codeLength <= 0 )
-		{
-			VM_Free(vm);
-			FS_FreeFile(header.v);
+		// show where the qvm was loaded from
+		FS_Which(filename, vm->searchPath);
 
-			Com_Printf(S_COLOR_YELLOW "Warning: %s has bad header\n", filename);
-			return NULL;
-		}
+		VM_Free( vm );
+		FS_FreeFile( header.v );
+
+		return NULL;
 	} else {
 		VM_Free( vm );
 		FS_FreeFile(header.v);
@@ -440,26 +499,44 @@ vmHeader_t *VM_LoadQVM( vm_t *vm, qboolean alloc, qboolean unpure)
 		return NULL;
 	}
 
-	// round up to next power of 2 so all data operations can
-	// be mask protected
+	// find size of the data
 	dataLength = header.h->dataLength + header.h->litLength +
 		header.h->bssLength;
-	for ( i = 0 ; dataLength > ( 1 << i ) ; i++ ) {
+
+	// reserve additional data for dynamic memory allocation via a system call
+	hunkLength = dataLength + heapRequestedSize;
+
+	// round up to next power of 2 so all data operations can
+	// be mask protected, extra data is used for dynamic memory allocation
+	for ( i = 0 ; hunkLength > ( 1 << i ) ; i++ ) {
 	}
-	dataLength = 1 << i;
+	hunkLength = 1 << i;
 
 	if(alloc)
 	{
 		// allocate zero filled space for initialized and uninitialized data
 		// leave some space beyond data mask so we can secure all mask operations
-		vm->dataAlloc = dataLength + 4;
-		vm->dataBase = Hunk_Alloc(vm->dataAlloc, h_high);
-		vm->dataMask = dataLength - 1;
+		vm->dataAlloc = hunkLength + 4;
+		vm->dataBase = Hunk_Alloc(hunkLength, h_high);
+		vm->dataMask = hunkLength - 1;
+
+		// set up dynamic memory access
+		if ( heapRequestedSize > 0 ) {
+			vm->heapBase = vm->dataBase + dataLength;
+
+			// the stack is implicitly at the end of the image
+			vm->heapLength = hunkLength - PROGRAM_STACK_SIZE - dataLength;
+
+			Z_VM_InitHeap( vm->zoneTag, vm->heapBase, vm->heapLength );
+		} else {
+			vm->heapBase = NULL;
+			vm->heapLength = 0;
+		}
 	}
 	else
 	{
 		// clear the data, but make sure we're not clearing more than allocated
-		if(vm->dataAlloc != dataLength + 4)
+		if(vm->dataAlloc != hunkLength + 4)
 		{
 			VM_Free(vm);
 			FS_FreeFile(header.v);
@@ -481,14 +558,14 @@ vmHeader_t *VM_LoadQVM( vm_t *vm, qboolean alloc, qboolean unpure)
 		*(int *)(vm->dataBase + i) = LittleLong( *(int *)(vm->dataBase + i ) );
 	}
 
-	if(header.h->vmMagic == VM_MAGIC_VER2)
+	if(header.h->vmMagic == VM_MAGIC_VER2_NEO)
 	{
 		int previousNumJumpTableTargets = vm->numJumpTableTargets;
 
 		header.h->jtrgLength &= ~0x03;
 
 		vm->numJumpTableTargets = header.h->jtrgLength >> 2;
-		Com_Printf("Loading %d jump table targets\n", vm->numJumpTableTargets);
+		Com_DPrintf("Loading %d jump table targets\n", vm->numJumpTableTargets);
 
 		if(alloc)
 		{
@@ -536,31 +613,31 @@ vm_t *VM_Restart(vm_t *vm, qboolean unpure)
 {
 	vmHeader_t	*header;
 
-	// DLL's can't be restarted in place
+	Com_DPrintf("VM_Restart()\n");
+
 	if ( vm->dllHandle ) {
-		char	name[MAX_QPATH];
-		intptr_t	(*systemCall)( intptr_t *parms );
-		
-		systemCall = vm->systemCall;	
-		Q_strncpyz( name, vm->name, sizeof( name ) );
+		Sys_UnloadDll( vm->dllHandle );
 
-		VM_Free( vm );
+		vm->dllHandle = Sys_LoadGameDll( vm->filename, &vm->entryPoint, VM_DllSyscall );
 
-		vm = VM_Create( name, systemCall, VMI_NATIVE );
-		return vm;
+		if ( !vm->dllHandle ) {
+			Com_Error( ERR_DROP, "VM_Restart failed" );
+			return NULL;
+		}
+	} else {
+		// load the image
+		if(!(header = VM_LoadQVM(vm, qfalse, unpure, vm->heapRequestedSize)))
+		{
+			Com_Error(ERR_DROP, "VM_Restart failed");
+			return NULL;
+		}
+
+		// free the original file
+		FS_FreeFile(header);
 	}
 
-	// load the image
-	Com_Printf("VM_Restart()\n");
-
-	if(!(header = VM_LoadQVM(vm, qfalse, unpure)))
-	{
-		Com_Error(ERR_DROP, "VM_Restart failed");
-		return NULL;
-	}
-
-	// free the original file
-	FS_FreeFile(header);
+	// clear the zone to a single free block
+	Z_VM_InitHeap( vm->zoneTag, vm->heapBase, vm->heapLength );
 
 	return vm;
 }
@@ -574,7 +651,7 @@ it will attempt to load as a system dll
 ================
 */
 vm_t *VM_Create( const char *module, intptr_t (*systemCalls)(intptr_t *), 
-				vmInterpret_t interpret ) {
+				vmInterpret_t interpret, int zoneTag, int heapRequestedSize ) {
 	vm_t		*vm;
 	vmHeader_t	*header;
 	int			i, remaining, retval;
@@ -609,6 +686,8 @@ vm_t *VM_Create( const char *module, intptr_t (*systemCalls)(intptr_t *),
 	vm = &vmTable[i];
 
 	Q_strncpyz(vm->name, module, sizeof(vm->name));
+	vm->zoneTag = zoneTag;
+	vm->heapRequestedSize = heapRequestedSize;
 
 	do
 	{
@@ -616,13 +695,17 @@ vm_t *VM_Create( const char *module, intptr_t (*systemCalls)(intptr_t *),
 		
 		if(retval == VMI_NATIVE)
 		{
-			Com_Printf("Try loading dll file %s\n", filename);
+			Com_DPrintf("Try loading dll file %s\n", filename);
 
 			vm->dllHandle = Sys_LoadGameDll(filename, &vm->entryPoint, VM_DllSyscall);
 			
 			if(vm->dllHandle)
 			{
 				vm->systemCall = systemCalls;
+				Q_strncpyz(vm->filename, filename, sizeof(vm->filename));
+				vm->heapBase = heapRequestedSize > 0 ? Hunk_Alloc( heapRequestedSize, h_high ) : NULL;
+				vm->heapLength = heapRequestedSize;
+				Z_VM_InitHeap( vm->zoneTag, vm->heapBase, vm->heapLength );
 				return vm;
 			}
 			
@@ -631,7 +714,8 @@ vm_t *VM_Create( const char *module, intptr_t (*systemCalls)(intptr_t *),
 		else if(retval == VMI_COMPILED)
 		{
 			vm->searchPath = startSearch;
-			if((header = VM_LoadQVM(vm, qtrue, qfalse)))
+			Q_strncpyz(vm->filename, filename, sizeof(vm->filename));
+			if((header = VM_LoadQVM(vm, qtrue, qtrue, heapRequestedSize)))
 				break;
 
 			// VM_Free overwrites the name on failed load
@@ -681,7 +765,7 @@ vm_t *VM_Create( const char *module, intptr_t (*systemCalls)(intptr_t *),
 	vm->programStack = vm->dataMask + 1;
 	vm->stackBottom = vm->programStack - PROGRAM_STACK_SIZE;
 
-	Com_Printf("%s loaded in %d bytes on the hunk\n", module, remaining - Hunk_MemoryRemaining());
+	Com_DPrintf("%s loaded in %d bytes on the hunk\n", module, remaining - Hunk_MemoryRemaining());
 
 	return vm;
 }
@@ -695,6 +779,10 @@ void VM_Free( vm_t *vm ) {
 
 	if(!vm) {
 		return;
+	}
+
+	if ( vm->zoneTag ) {
+		Z_VM_ShutdownHeap( vm->zoneTag );
 	}
 
 	if(vm->callLevel) {
@@ -711,6 +799,11 @@ void VM_Free( vm_t *vm ) {
 
 	if ( vm->dllHandle ) {
 		Sys_UnloadDll( vm->dllHandle );
+#if 0	// now automatically freed by hunk
+		if ( vm->heapBase ) {
+			Z_Free( vm->heapBase );
+		}
+#endif
 		Com_Memset( vm, 0, sizeof( *vm ) );
 	}
 #if 0	// now automatically freed by hunk
@@ -811,7 +904,7 @@ intptr_t QDECL VM_Call( vm_t *vm, int callnum, ... )
 	int i;
 
 	if(!vm || !vm->name[0])
-		Com_Error(ERR_FATAL, "VM_Call with NULL vm");
+		Com_Error(ERR_FATAL, "VM_Call with NULL vm (callnum is %d)", callnum);
 
 	oldVM = currentVM;
 	currentVM = vm;
@@ -870,6 +963,70 @@ intptr_t QDECL VM_Call( vm_t *vm, int callnum, ... )
 	if ( oldVM != NULL )
 	  currentVM = oldVM;
 	return r;
+}
+
+//=================================================================
+
+vm_t *safeVM = NULL;
+
+intptr_t VM_APISafeSystemCalls( intptr_t *args ) {
+	Com_Printf("*** Unsafe VM API system call detected:\n");
+	Com_Printf("*** The %s VM tried to make an API call during API setup process, since we\n", safeVM ? safeVM->name : "unknown");
+	Com_Printf("*** haven't finished checking the API name/version we don't know what it should do.\n");
+	Com_Error(ERR_FATAL, "Incompatible %s VM (tried to make an API system call before init)", safeVM ? safeVM->name : "unknown");
+	return 0;
+}
+
+// Makes a VM_Call where the vm cannot make any system calls.
+// If vm tries to make a system call, it errors.
+// Probably only useful for getting api version.
+intptr_t QDECL VM_SafeCall( vm_t *vm, int callnum )
+{
+	intptr_t	(*savedSystemCall)( intptr_t *parms );
+	intptr_t	value;
+
+	safeVM = vm;
+	savedSystemCall = vm->systemCall;
+
+	// Use API safe system call function.
+	vm->systemCall = VM_APISafeSystemCalls;
+
+	// Make the call.
+	value = VM_Call( vm, callnum );
+
+	// Restore systemCall pointer
+	vm->systemCall = savedSystemCall;
+
+	return value;
+}
+
+void VM_GetVersion( vm_t *vm, int nameCallNum, int versionCallNum, char *apiName, int apiNameSize, int *major, int *minor ) {
+	const char			*apiNamePtr;
+	unsigned int		version;
+	int					i;
+
+	apiNamePtr = VM_ExplicitArgPtr( vm, VM_SafeCall( vm, nameCallNum ) );
+	version = VM_SafeCall( vm, versionCallNum );
+	*major = (version >> 16) & 0xFFFF;
+	*minor = version & 0xFFFF;
+
+	// make sure API name is a graphic string and length < 64
+	if ( apiNamePtr ) {
+		for (i = 0; i < apiNameSize; i++) {
+			if ( !apiNamePtr[i])
+				break;
+			if ( !isgraph( apiNamePtr[i]) ) {
+				apiNamePtr = NULL;
+				break;
+			}
+		}
+		if ( i == 0 || i == apiNameSize )
+			apiNamePtr = NULL;
+	}
+	if ( !apiNamePtr ) {
+		apiNamePtr = "Unknown";
+	}
+	Q_strncpyz( apiName, apiNamePtr, apiNameSize );
 }
 
 //=================================================================
@@ -945,6 +1102,7 @@ VM_VmInfo_f
 void VM_VmInfo_f( void ) {
 	vm_t	*vm;
 	int		i;
+	int		freeMemory;
 
 	Com_Printf( "Registered virtual machines:\n" );
 	for ( i = 0 ; i < MAX_VM ; i++ ) {
@@ -952,19 +1110,30 @@ void VM_VmInfo_f( void ) {
 		if ( !vm->name[0] ) {
 			break;
 		}
+
 		Com_Printf( "%s : ", vm->name );
 		if ( vm->dllHandle ) {
 			Com_Printf( "native\n" );
-			continue;
-		}
-		if ( vm->compiled ) {
+		} else if ( vm->compiled ) {
 			Com_Printf( "compiled on load\n" );
 		} else {
 			Com_Printf( "interpreted\n" );
 		}
-		Com_Printf( "    code length : %7i\n", vm->codeLength );
-		Com_Printf( "    table length: %7i\n", vm->instructionCount*4 );
-		Com_Printf( "    data length : %7i\n", vm->dataMask + 1 );
+
+		Com_Printf( "    file name   : \"%s\"\n", vm->filename );
+
+		if ( !vm->dllHandle ) {
+			Com_Printf( "    code length : %7i\n", vm->codeLength );
+			Com_Printf( "    table length: %7i\n", vm->instructionCount*4 );
+			Com_Printf( "    data length : %7i\n", vm->dataMask + 1 );
+		}
+
+		freeMemory = Z_VM_HeapAvailable( vm->zoneTag );
+
+		Com_Printf( "  dynamic memory:\n" );
+		Com_Printf( "    total memory: %7i\n", vm->heapLength );
+		Com_Printf( "    free memory : %7i\n", freeMemory );
+		Com_Printf( "    used memory : %7i\n", vm->heapLength - freeMemory );
 	}
 }
 
@@ -1007,4 +1176,56 @@ void VM_BlockCopy(unsigned int dest, unsigned int src, size_t n)
 	}
 
 	Com_Memcpy(currentVM->dataBase + dest, currentVM->dataBase + src, n);
+}
+
+/*
+=================
+VM_HeapMalloc
+=================
+*/
+intptr_t VM_HeapMalloc( int size ) {
+	byte *buf;
+
+	if ( !currentVM->heapBase ) {
+		Com_Error( ERR_DROP, "VM_HeapMalloc: Cannot allocate %d bytes for %s (no heap)", size, currentVM->name );
+		return 0;
+	}
+
+	buf = Z_TagMalloc( size, currentVM->zoneTag );
+
+	if ( !buf ) {
+		Com_Error( ERR_DROP, "VM_HeapMalloc: Cannot allocate %d bytes for %s (heap full)", size, currentVM->name );
+		return 0;
+	}
+
+	Com_Memset( buf, 0, size );
+
+	return buf - currentVM->dataBase;
+}
+
+/*
+=================
+VM_HeapAvailable
+=================
+*/
+int VM_HeapAvailable( void ) {
+	if ( !currentVM->heapBase ) {
+		return 0;
+	}
+	return Z_VM_HeapAvailable( currentVM->zoneTag );
+}
+
+/*
+=================
+VM_HeapFree
+=================
+*/
+void VM_HeapFree( void *data ) {
+	if ( !currentVM->heapBase ) {
+		return;
+	}
+	if ( !data ) {
+		Com_Error( ERR_DROP, "VM_HeapFree: NULL pointer from %s", currentVM->name );
+	}
+	Z_Free( data );
 }

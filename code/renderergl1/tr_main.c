@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 // tr_main.c -- main control flow for each frame
@@ -42,6 +50,225 @@ refimport_t	ri;
 // entities that will have procedurally generated surfaces will just
 // point at this for their sorting surface
 surfaceType_t	entitySurface = SF_ENTITY;
+
+// fog stuff
+qboolean fogIsOn = qfalse;
+fogType_t lastGlfogType = FT_NONE;
+
+/*
+=================
+RB_Fog
+=================
+*/
+void RB_Fog( int fogNum ) {
+	//static int			lastFogMode = 0;
+	//static vec3_t		lastColor = { -1, -1, -1 };
+	//static float		lastDensity = -1;
+	//static int			lastHint = -1;
+	//static float		lastStart = -1, lastEnd = -1;
+
+	int					fogMode;
+	vec3_t				color;
+	float				density;
+	int					hint;
+	float				start, end;
+
+	if ( !r_useGlFog->integer ) {
+		R_FogOff();
+		lastGlfogType = FT_NONE;
+		return;
+	}
+
+	if ( R_IsGlobalFog( fogNum ) ) {
+		lastGlfogType = backEnd.refdef.fogType;
+
+		switch ( backEnd.refdef.fogType ) {
+			case FT_LINEAR:
+				fogMode = GL_LINEAR;
+				break;
+
+			case FT_EXP:
+				fogMode = GL_EXP;
+				break;
+
+			default:
+				R_FogOff();
+				lastGlfogType = FT_NONE;
+				return;
+		}
+
+		VectorCopy( backEnd.refdef.fogColor, color );
+
+		end = backEnd.refdef.fogDepthForOpaque;
+		density = backEnd.refdef.fogDensity;
+
+	} else {
+		fog_t *fog;
+
+		fog = tr.world->fogs + fogNum;
+
+		if ( !fog->shader ) {
+			R_FogOff();
+			lastGlfogType = FT_NONE;
+			return;
+		}
+
+		lastGlfogType = fog->shader->fogParms.fogType;
+
+		switch ( fog->shader->fogParms.fogType ) {
+			case FT_LINEAR:
+				fogMode = GL_LINEAR;
+				break;
+
+			case FT_EXP:
+				fogMode = GL_EXP;
+				break;
+
+			default:
+				R_FogOff();
+				return;
+		}
+
+		VectorCopy( fog->shader->fogParms.color, color );
+
+		end = fog->shader->fogParms.depthForOpaque;
+		density = fog->shader->fogParms.density;
+	}
+
+	hint = GL_DONT_CARE;
+	start = 0;
+
+	RB_FogOn();
+
+	// only send changes if necessary
+
+	//if ( fogMode != lastFogMode ) {
+		qglFogi( GL_FOG_MODE, fogMode );
+	//	lastFogMode = fogMode;
+	//}
+	//if ( color[0] != lastColor[0] || color[1] != lastColor[1] || color[2] != lastColor[2] || !lastFogMode ) {
+		qglFogfv( GL_FOG_COLOR, color );
+	//	VectorCopy( lastColor, color );
+	//}
+	//if ( density != lastDensity || !lastFogMode ) {
+		qglFogf( GL_FOG_DENSITY, density );
+	//	lastDensity = density;
+	//}
+	//if ( hint != lastHint || !lastFogMode ) {
+		qglHint( GL_FOG_HINT, hint );
+	//	lastHint = hint;
+	//}
+	//if ( start != lastStart || !lastFogMode ) {
+		qglFogf( GL_FOG_START, start );
+	//	lastStart = start;
+	//}
+	//if ( end != lastEnd || !lastFogMode ) {
+		qglFogf( GL_FOG_END, end );
+	//	lastEnd = end;
+	//}
+
+#if 0 // ZTM: TODO: Add NVidia fog code?
+// TTimo - from SP NV fog code
+	// NV fog mode
+	if ( glConfig.NVFogAvailable ) {
+		qglFogi( GL_FOG_DISTANCE_MODE_NV, glConfig.NVFogMode );
+	}
+// end
+#endif
+
+	//qglClearColor( color[0], color[1], color[2], 1.0f );
+}
+
+void R_FogOff( void ) {
+	if ( !fogIsOn ) {
+		return;
+	}
+	qglDisable( GL_FOG );
+	fogIsOn = qfalse;
+}
+
+void RB_FogOn( void ) {
+	if ( fogIsOn ) {
+		return;
+	}
+
+	if ( !r_useGlFog->integer ) {
+		return;
+	}
+
+	if ( lastGlfogType == FT_NONE ) {
+		return;
+	}
+
+	qglEnable( GL_FOG );
+	fogIsOn = qtrue;
+}
+
+/*
+=================
+R_BoundsFogNum
+=================
+*/
+qboolean R_IsGlobalFog( int fogNum ) {
+
+	if ( !tr.world || fogNum <= 0 || fogNum >= tr.world->numfogs ) {
+		return qfalse;
+	}
+
+	return ( tr.world->fogs[ fogNum ].originalBrushNumber < 0 );
+}
+
+/*
+=================
+R_BoundsFogNum
+=================
+*/
+int R_BoundsFogNum( const trRefdef_t *refdef, vec3_t mins, vec3_t maxs ) {
+	int i, j;
+	fog_t *fog;
+
+	if ( refdef->rdflags & RDF_NOWORLDMODEL ) {
+		return 0;
+	}
+
+	// 0 is no fog, 1 is global fog
+	for ( i = 2; i < tr.world->numfogs; i++ ) {
+		fog = &tr.world->fogs[ i ];
+		for ( j = 0; j < 3; j++ ) {
+			if ( mins[ j ] >= fog->bounds[ 1 ][ j ] ||
+				 maxs[ j ] <= fog->bounds[ 0 ][ j ] ) {
+				break;
+			}
+		}
+		if ( j == 3 ) {
+			return i;
+		}
+	}
+
+	// default to global fog if enabled
+	if ( refdef->fogType != FT_NONE ) {
+		return 1;
+	}
+
+	return 0;
+}
+
+/*
+=================
+R_PointFogNum
+=================
+*/
+int R_PointFogNum( const trRefdef_t *refdef, vec3_t point, float radius ) {
+	int i;
+	vec3_t mins, maxs;
+
+	for ( i = 0; i < 3; i++ ) {
+		mins[i] = point[i] - radius;
+		maxs[i] = point[i] + radius;
+	}
+
+	return R_BoundsFogNum( refdef, mins, maxs );
+}
 
 /*
 =================
@@ -77,7 +304,7 @@ int R_CullLocalBox (vec3_t bounds[2]) {
 
 	// check against frustum planes
 	anyBack = 0;
-	for (i = 0 ; i < 4 ; i++) {
+	for (i = 0 ; i < 5 ; i++) {
 		frust = &tr.viewParms.frustum[i];
 
 		front = back = 0;
@@ -133,7 +360,7 @@ int R_CullPointAndRadius( vec3_t pt, float radius )
 	}
 
 	// check against frustum planes
-	for (i = 0 ; i < 4 ; i++) 
+	for (i = 0 ; i < 5 ; i++) 
 	{
 		frust = &tr.viewParms.frustum[i];
 
@@ -275,16 +502,43 @@ void R_RotateForEntity( const trRefEntity_t *ent, const viewParms_t *viewParms,
 	vec3_t	delta;
 	float	axisLength;
 
-	if ( ent->e.reType != RT_MODEL ) {
+	if ( ent->e.reType != RT_MODEL && ent->e.reType != RT_POLY_LOCAL ) {
 		*or = viewParms->world;
 		return;
 	}
 
 	VectorCopy( ent->e.origin, or->origin );
 
-	VectorCopy( ent->e.axis[0], or->axis[0] );
-	VectorCopy( ent->e.axis[1], or->axis[1] );
-	VectorCopy( ent->e.axis[2], or->axis[2] );
+	if ( ent->e.renderfx & RF_AUTOAXIS ) {
+		VectorCopy( viewParms->or.axis[0], or->axis[0] ); VectorScale( or->axis[0], -1, or->axis[0]);
+		VectorCopy( viewParms->or.axis[1], or->axis[1] ); if ( !viewParms->isMirror ) VectorScale( or->axis[1], -1, or->axis[1]);
+		VectorCopy( viewParms->or.axis[2], or->axis[2] ); VectorScale( or->axis[2], -1, or->axis[2]);
+	} else if ( ent->e.renderfx & RF_AUTOAXIS2 ) {
+		vec3_t v1, v2;
+
+		// compute forward vector
+		VectorSubtract( ent->e.origin, ent->e.oldorigin, or->axis[0] );
+		VectorNormalize( or->axis[0] );
+
+		// compute side vector
+		VectorSubtract( ent->e.oldorigin, viewParms->or.origin, v1 );
+		VectorNormalize( v1 );
+		VectorSubtract( ent->e.origin, viewParms->or.origin, v2 );
+		VectorNormalize( v2 );
+		CrossProduct( v1, v2, or->axis[2] );
+		VectorNormalize( or->axis[2] );
+
+		// compute up vector
+		CrossProduct( or->axis[0], or->axis[2], or->axis[1] );
+
+		// find midpoint
+		VectorAdd( ent->e.origin, ent->e.oldorigin, or->origin );
+		VectorScale( or->origin, 0.5f, or->origin );
+	} else {
+		VectorCopy( ent->e.axis[0], or->axis[0] );
+		VectorCopy( ent->e.axis[1], or->axis[1] );
+		VectorCopy( ent->e.axis[2], or->axis[2] );
+	}
 
 	glMatrix[0] = or->axis[0][0];
 	glMatrix[4] = or->axis[1][0];
@@ -393,6 +647,12 @@ static void R_SetFarClip( void )
 		return;
 	}
 
+	// set r_zfar to experiment with different distances
+	if ( r_zfar->value ) {
+		tr.viewParms.zFar = r_zfar->integer;
+		return;
+	}
+
 	//
 	// set far clipping planes dynamically
 	//
@@ -440,6 +700,10 @@ static void R_SetFarClip( void )
 		}
 	}
 	tr.viewParms.zFar = sqrt( farthestCornerDistance );
+
+	if ( tr.refdef.maxFarClip > 1 && tr.refdef.maxFarClip < tr.viewParms.zFar ) {
+		tr.viewParms.zFar = tr.refdef.maxFarClip;
+	}
 }
 
 /*
@@ -503,6 +767,12 @@ void R_SetupFrustum (viewParms_t *dest, float xmin, float xmax, float ymax, floa
 		dest->frustum[i].dist = DotProduct (ofsorigin, dest->frustum[i].normal);
 		SetPlaneSignbits( &dest->frustum[i] );
 	}
+
+	// farplane
+	VectorScale( dest->or.axis[0], -1, dest->frustum[4].normal );
+	dest->frustum[4].dist = DotProduct( dest->or.origin, dest->frustum[4].normal ) - dest->zFar;
+	dest->frustum[4].type = PLANE_NON_AXIAL;
+	SetPlaneSignbits( &dest->frustum[4] );
 }
 
 /*
@@ -555,8 +825,12 @@ void R_SetupProjection(viewParms_t *dest, float zProj, qboolean computeFrustum)
 	dest->projectionMatrix[15] = 0;
 	
 	// Now that we have all the data for the projection matrix we can also setup the view frustum.
-	if(computeFrustum)
+	if(computeFrustum) {
+		// dynamically compute far clip plane distance
+		R_SetFarClip();
+
 		R_SetupFrustum(dest, xmin, xmax, ymax, zProj, stereoSep);
+	}
 }
 
 /*
@@ -571,7 +845,13 @@ void R_SetupProjectionZ(viewParms_t *dest)
 	float zNear, zFar, depth;
 	
 	zNear	= r_znear->value;
-	zFar	= dest->zFar;	
+
+	if ( r_zfar->integer ) {
+		zFar = r_zfar->integer; // (SA) allow override for helping level designers test fog distances
+	} else {
+		zFar = dest->zFar;
+	}
+
 	depth	= zFar - zNear;
 
 	dest->projectionMatrix[2] = 0;
@@ -620,9 +900,9 @@ R_PlaneForSurface
 =============
 */
 void R_PlaneForSurface (surfaceType_t *surfType, cplane_t *plane) {
-	srfTriangles_t	*tri;
+	srfTriangles_t  *tri;
 	srfPoly_t		*poly;
-	drawVert_t		*v1, *v2, *v3;
+	drawVert_t    *v1, *v2, *v3;
 	vec4_t			plane4;
 
 	if (!surfType) {
@@ -631,16 +911,13 @@ void R_PlaneForSurface (surfaceType_t *surfType, cplane_t *plane) {
 		return;
 	}
 	switch (*surfType) {
-	case SF_FACE:
-		*plane = ((srfSurfaceFace_t *)surfType)->plane;
-		return;
 	case SF_TRIANGLES:
 		tri = (srfTriangles_t *)surfType;
 		v1 = tri->verts + tri->indexes[0];
 		v2 = tri->verts + tri->indexes[1];
 		v3 = tri->verts + tri->indexes[2];
 		PlaneFromPoints( plane4, v1->xyz, v2->xyz, v3->xyz );
-		VectorCopy( plane4, plane->normal ); 
+		VectorCopy( plane4, plane->normal );
 		plane->dist = plane4[3];
 		return;
 	case SF_POLY:
@@ -853,6 +1130,7 @@ static qboolean SurfIsOffscreen( const drawSurf_t *drawSurf, vec4_t clipDest[128
 	shader_t *shader;
 	int		fogNum;
 	int dlighted;
+	int sortOrder;
 	vec4_t clip, eye;
 	int i;
 	unsigned int pointOr = 0;
@@ -860,7 +1138,7 @@ static qboolean SurfIsOffscreen( const drawSurf_t *drawSurf, vec4_t clipDest[128
 
 	R_RotateForViewer();
 
-	R_DecomposeSort( drawSurf->sort, &entityNum, &shader, &fogNum, &dlighted );
+	R_DecomposeSort( drawSurf, &shader, &sortOrder, &entityNum, &fogNum, &dlighted );
 	RB_BeginSurface( shader, fogNum );
 	rb_surfaceTable[ *drawSurf->surface ]( drawSurf->surface );
 
@@ -1004,34 +1282,44 @@ See if a sprite is inside a fog volume
 =================
 */
 int R_SpriteFogNum( trRefEntity_t *ent ) {
-	int				i, j;
-	fog_t			*fog;
+	if ( ent->e.renderfx & RF_CROSSHAIR ) {
+		return 0;
+	}
+
+	return R_PointFogNum( &tr.refdef, ent->e.origin, ent->e.radius );
+}
+
+/*
+=================
+R_PolyEntFogNum
+
+See if poly entity is inside a fog volume
+
+FIXME: RT_POLY_LOCAL with RF_AUTOAXIS should rotate points before adding to mins/maxs
+=================
+*/
+int R_PolyEntFogNum( trRefEntity_t *ent ) {
+	int				i;
+	vec3_t			mins, maxs;
 
 	if ( tr.refdef.rdflags & RDF_NOWORLDMODEL ) {
 		return 0;
 	}
 
-	if ( ent->e.renderfx & RF_CROSSHAIR ) {
-		return 0;
+	VectorCopy( ent->verts[0].xyz, mins );
+	VectorCopy( ent->verts[0].xyz, maxs );
+	for ( i = 1 ; i < ent->numVerts*ent->numPolys ; i++ ) {
+		AddPointToBounds( ent->verts[i].xyz, mins, maxs );
 	}
 
-	for ( i = 1 ; i < tr.world->numfogs ; i++ ) {
-		fog = &tr.world->fogs[i];
-		for ( j = 0 ; j < 3 ; j++ ) {
-			if ( ent->e.origin[j] - ent->e.radius >= fog->bounds[1][j] ) {
-				break;
-			}
-			if ( ent->e.origin[j] + ent->e.radius <= fog->bounds[0][j] ) {
-				break;
-			}
-		}
-		if ( j == 3 ) {
-			return i;
-		}
+	if ( ent->e.reType == RT_POLY_LOCAL ) {
+		VectorAdd( ent->e.origin, mins, mins );
+		VectorAdd( ent->e.origin, maxs, maxs );
 	}
 
-	return 0;
+	return R_BoundsFogNum( &tr.refdef, mins, maxs );
 }
+
 
 /*
 ==========================================================================================
@@ -1084,15 +1372,74 @@ static void R_RadixSort( drawSurf_t *source, int size )
   R_Radix( 1, size, scratch, source );
   R_Radix( 2, size, source, scratch );
   R_Radix( 3, size, scratch, source );
+  R_Radix( 4, size, source, scratch );
+  //R_Radix( 5, size, scratch, source );
+  //R_Radix( 6, size, source, scratch );
+  //R_Radix( 7, size, scratch, source );
+
+  // ZTM: if odd number of R_Radix, manually update source
+  Com_Memcpy( source, scratch, size * sizeof( drawSurf_t ) );
 #else
+  R_Radix( 7, size, source, scratch );
+  R_Radix( 6, size, scratch, source );
+  R_Radix( 5, size, source, scratch );
+  R_Radix( 4, size, scratch, source );
   R_Radix( 3, size, source, scratch );
-  R_Radix( 2, size, scratch, source );
-  R_Radix( 1, size, source, scratch );
-  R_Radix( 0, size, scratch, source );
+  //R_Radix( 2, size, scratch, source );
+  //R_Radix( 1, size, source, scratch );
+  //R_Radix( 0, size, scratch, source );
+
+  // ZTM: if odd number of R_Radix, manually update source
+  Com_Memcpy( source, scratch, size * sizeof( drawSurf_t ) );
 #endif //Q3_LITTLE_ENDIAN
 }
 
 //==========================================================================================
+
+/*
+=================
+R_AddEntDrawSurf
+=================
+*/
+void R_AddEntDrawSurf( trRefEntity_t *ent, surfaceType_t *surface, shader_t *shader, 
+				   int fogIndex, int dlightMap, int sortLevel ) {
+	int				index;
+	int				sortOrder;
+	shaderSort_t	shaderSort;
+	int				i;
+
+	if ( ent && ( ent->e.renderfx & RF_FORCE_ENT_ALPHA ) ) {
+		shaderSort = SS_BLEND0;
+	} else {
+		shaderSort = shader->sort;
+	}
+
+	// if sortLevel is set, make the sort order be 'the last sorted shader for shaderSort' plus sortLevel
+	if ( sortLevel > 0 ) {
+		if ( sortLevel > 1024 ) {
+			sortLevel = 1024;
+		}
+
+		sortOrder = 1024 * ( shaderSort - 1 ) + sortLevel;
+
+		for ( i = 1; i <= shaderSort; ++i ) {
+			sortOrder += tr.numShadersSort[ shaderSort ];
+		}
+	} else {
+		// if this is changed, update SortNewShader()
+		sortOrder = 1024 * ( shaderSort - 1 ) + shader->sortedIndex;
+	}
+
+	// instead of checking for overflow, we just mask the index
+	// so it wraps around
+	index = tr.refdef.numDrawSurfs & DRAWSURF_MASK;
+	// the sort data is packed into a single 64 bit value so it can be
+	// compared quickly during the qsorting process
+	R_ComposeSort(&tr.refdef.drawSurfs[index], shader->sortedIndex, sortOrder,
+					tr.shiftedEntityNum, fogIndex, dlightMap);
+	tr.refdef.drawSurfs[index].surface = surface;
+	tr.refdef.numDrawSurfs++;
+}
 
 /*
 =================
@@ -1101,17 +1448,19 @@ R_AddDrawSurf
 */
 void R_AddDrawSurf( surfaceType_t *surface, shader_t *shader, 
 				   int fogIndex, int dlightMap ) {
-	int			index;
+	R_AddEntDrawSurf( NULL, surface, shader, fogIndex, dlightMap, 0 );
+}
 
-	// instead of checking for overflow, we just mask the index
-	// so it wraps around
-	index = tr.refdef.numDrawSurfs & DRAWSURF_MASK;
-	// the sort data is packed into a single 32 bit value so it can be
-	// compared quickly during the qsorting process
-	tr.refdef.drawSurfs[index].sort = (shader->sortedIndex << QSORT_SHADERNUM_SHIFT) 
-		| tr.shiftedEntityNum | ( fogIndex << QSORT_FOGNUM_SHIFT ) | (int)dlightMap;
-	tr.refdef.drawSurfs[index].surface = surface;
-	tr.refdef.numDrawSurfs++;
+/*
+=================
+R_ComposeSort
+=================
+*/
+void R_ComposeSort( drawSurf_t *drawSurf, int sortedShaderIndex, int sortOrder,
+					 int shiftedEntityNum, int fogIndex, int dlightMap ) {
+	drawSurf->shaderIndex = tr.sortedShaders[ sortedShaderIndex ]->index;
+	drawSurf->sort = ((uint64_t)sortOrder << QSORT_ORDER_SHIFT)
+		| (uint64_t)shiftedEntityNum | ( (uint64_t)fogIndex << QSORT_FOGNUM_SHIFT ) | (uint64_t)dlightMap;
 }
 
 /*
@@ -1119,12 +1468,13 @@ void R_AddDrawSurf( surfaceType_t *surface, shader_t *shader,
 R_DecomposeSort
 =================
 */
-void R_DecomposeSort( unsigned sort, int *entityNum, shader_t **shader, 
-					 int *fogNum, int *dlightMap ) {
-	*fogNum = ( sort >> QSORT_FOGNUM_SHIFT ) & 31;
-	*shader = tr.sortedShaders[ ( sort >> QSORT_SHADERNUM_SHIFT ) & (MAX_SHADERS-1) ];
-	*entityNum = ( sort >> QSORT_REFENTITYNUM_SHIFT ) & REFENTITYNUM_MASK;
-	*dlightMap = sort & 3;
+void R_DecomposeSort( const drawSurf_t *drawSurf, shader_t **shader, int *sortOrder,
+					 int *entityNum, int *fogNum, int *dlightMap ) {
+	*shader = tr.shaders[ drawSurf->shaderIndex ];
+	*sortOrder = ( drawSurf->sort >> QSORT_ORDER_SHIFT ) & ((1<<QSORT_ORDER_BITS) - 1);
+	*entityNum = ( drawSurf->sort >> QSORT_REFENTITYNUM_SHIFT ) & REFENTITYNUM_MASK;
+	*fogNum = ( drawSurf->sort >> QSORT_FOGNUM_SHIFT ) & 31;
+	*dlightMap = drawSurf->sort & 3;
 }
 
 /*
@@ -1137,6 +1487,7 @@ void R_SortDrawSurfs( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	int				fogNum;
 	int				entityNum;
 	int				dlighted;
+	int				sortOrder;
 	int				i;
 
 	// it is possible for some views to not have any surfaces
@@ -1152,7 +1503,7 @@ void R_SortDrawSurfs( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	// check for any pass through drawing, which
 	// may cause another view to be rendered first
 	for ( i = 0 ; i < numDrawSurfs ; i++ ) {
-		R_DecomposeSort( (drawSurfs+i)->sort, &entityNum, &shader, &fogNum, &dlighted );
+		R_DecomposeSort( (drawSurfs+i), &shader, &sortOrder, &entityNum, &fogNum, &dlighted );
 
 		if ( shader->sort > SS_PORTAL ) {
 			break;
@@ -1160,7 +1511,7 @@ void R_SortDrawSurfs( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 
 		// no shader should ever have this sort type
 		if ( shader->sort == SS_BAD ) {
-			ri.Error (ERR_DROP, "Shader '%s'with sort == SS_BAD", shader->name );
+			ri.Error (ERR_DROP, "Shader '%s' with sort == SS_BAD", shader->name );
 		}
 
 		// if the mirror was completely clipped away, we may need to check another surface
@@ -1184,6 +1535,7 @@ R_AddEntitySurfaces
 void R_AddEntitySurfaces (void) {
 	trRefEntity_t	*ent;
 	shader_t		*shader;
+	qboolean		onlyRenderShadows;
 
 	if ( !r_drawentities->integer ) {
 		return;
@@ -1194,37 +1546,51 @@ void R_AddEntitySurfaces (void) {
 		  tr.currentEntityNum++ ) {
 		ent = tr.currentEntity = &tr.refdef.entities[tr.currentEntityNum];
 
-		ent->needDlights = qfalse;
+		ent->needDlights = 0;
 
 		// preshift the value we are going to OR into the drawsurf sort
 		tr.shiftedEntityNum = tr.currentEntityNum << QSORT_REFENTITYNUM_SHIFT;
 
 		//
 		// the weapon model must be handled special --
-		// we don't want the hacked weapon position showing in 
+		// we don't want the hacked first person weapon position showing in 
 		// mirrors, because the true body position will already be drawn
 		//
-		if ( (ent->e.renderfx & RF_FIRST_PERSON) && tr.viewParms.isPortal) {
+		if ((ent->e.renderfx & RF_NO_MIRROR) && tr.viewParms.isPortal) {
 			continue;
+		}
+
+		onlyRenderShadows = qfalse;
+
+		//
+		// the player model must be handled special --
+		// we only want the player model shown in mirrors in first person mode,
+		// but may need to render shadow.
+		//
+		if ((ent->e.renderfx & RF_ONLY_MIRROR) && !tr.viewParms.isPortal) {
+			// ZTM: NOTE: cg_shadows 2 (stencil) doesn't work for first person models
+			//            so this only needs to handle cg_shadows 3 (black planar projection)
+			if (ent->e.reType == RT_MODEL && (ent->e.renderfx & RF_SHADOW_PLANE) && r_shadows->integer == 3) {
+				onlyRenderShadows = qtrue;
+			} else {
+				continue;
+			}
 		}
 
 		// simple generated models, like sprites and beams, are not culled
 		switch ( ent->e.reType ) {
 		case RT_PORTALSURFACE:
 			break;		// don't draw anything
+
 		case RT_SPRITE:
-		case RT_BEAM:
-		case RT_LIGHTNING:
-		case RT_RAIL_CORE:
-		case RT_RAIL_RINGS:
-			// self blood sprites, talk balloons, etc should not be drawn in the primary
-			// view.  We can't just do this check for all entities, because md3
-			// entities may still want to cast shadows from them
-			if ( (ent->e.renderfx & RF_THIRD_PERSON) && !tr.viewParms.isPortal) {
-				continue;
-			}
 			shader = R_GetShaderByHandle( ent->e.customShader );
-			R_AddDrawSurf( &entitySurface, shader, R_SpriteFogNum( ent ), 0 );
+			R_AddEntDrawSurf( ent, &entitySurface, shader, R_SpriteFogNum( ent ), 0, 0 );
+			break;
+
+		case RT_POLY_GLOBAL:
+		case RT_POLY_LOCAL:
+			shader = R_GetShaderByHandle( ent->e.customShader );
+			R_AddEntDrawSurf( ent, &entitySurface, shader, R_PolyEntFogNum( ent ), 0, 0 );
 			break;
 
 		case RT_MODEL:
@@ -1235,12 +1601,34 @@ void R_AddEntitySurfaces (void) {
 			if (!tr.currentModel) {
 				R_AddDrawSurf( &entitySurface, tr.defaultShader, 0, 0 );
 			} else {
+				// Check if model format doesn't support only rendering shadows
+				if (onlyRenderShadows && (tr.currentModel->type == MOD_BAD
+					|| tr.currentModel->type == MOD_BRUSH)) {
+					break;
+				}
+
 				switch ( tr.currentModel->type ) {
 				case MOD_MESH:
 					R_AddMD3Surfaces( ent );
 					break;
+				case MOD_MDC:
+					R_AddMDCSurfaces( ent );
+					break;
+				case MOD_TAN:
+					R_AddTANSurfaces( ent );
+					break;
 				case MOD_MDR:
 					R_MDRAddAnimSurfaces( ent );
+					break;
+				case MOD_MDS:
+					R_MDSAddAnimSurfaces( ent );
+					break;
+				case MOD_MDM:
+					R_MDMAddAnimSurfaces( ent );
+					break;
+				case MOD_MDX:
+					ri.Printf( PRINT_WARNING, "WARNING: Cannot draw MDX '%s', needs MDM for meshes\n",
+							tr.currentModel->name );
 					break;
 				case MOD_IQM:
 					R_AddIQMSurfaces( ent );
@@ -1249,9 +1637,6 @@ void R_AddEntitySurfaces (void) {
 					R_AddBrushModelSurfaces( ent );
 					break;
 				case MOD_BAD:		// null model axis
-					if ( (ent->e.renderfx & RF_THIRD_PERSON) && !tr.viewParms.isPortal) {
-						break;
-					}
 					R_AddDrawSurf( &entitySurface, tr.defaultShader, 0, 0 );
 					break;
 				default:
@@ -1274,18 +1659,34 @@ R_GenerateDrawSurfs
 ====================
 */
 void R_GenerateDrawSurfs( void ) {
+
+	// set the projection matrix (and view frustum) here
+	// first with max or fog distance so we can have proper
+	// arbitrary frustum farplane culling optimization
+	if ( tr.refdef.rdflags & RDF_NOWORLDMODEL || tr.world == NULL ) {
+		VectorSet( tr.viewParms.visBounds[ 0 ], MIN_WORLD_COORD, MIN_WORLD_COORD, MIN_WORLD_COORD );
+		VectorSet( tr.viewParms.visBounds[ 1 ], MAX_WORLD_COORD, MAX_WORLD_COORD, MAX_WORLD_COORD );
+	} else {
+		VectorCopy( tr.world->nodes->mins, tr.viewParms.visBounds[ 0 ] );
+		VectorCopy( tr.world->nodes->maxs, tr.viewParms.visBounds[ 1 ] );
+	}
+
+	R_SetupProjection(&tr.viewParms, r_zproj->value, qtrue);
+
+	R_CullDlights();
+
 	R_AddWorldSurfaces ();
 
 	R_AddPolygonSurfaces();
+
+	R_AddPolygonBufferSurfaces();
 
 	// set the projection matrix with the minimum zfar
 	// now that we have the world bounded
 	// this needs to be done before entities are
 	// added, because they use the projection
 	// matrix for lod calculation
-
-	// dynamically compute far clip plane distance
-	R_SetFarClip();
+	R_SetupProjection(&tr.viewParms, r_zproj->value, qtrue);
 
 	// we know the size of the clipping volume. Now set the rest of the projection matrix.
 	R_SetupProjectionZ (&tr.viewParms);
@@ -1342,8 +1743,13 @@ void R_DebugGraphics( void ) {
 	R_IssuePendingRenderCommands();
 
 	GL_Bind( tr.whiteImage);
-	GL_Cull( CT_FRONT_SIDED );
-	ri.CM_DrawDebugSurface( R_DebugPolygon );
+	if ( r_debugSurface->integer == 1 ) {
+		GL_Cull( CT_FRONT_SIDED );
+		ri.CM_DrawDebugSurface( R_DebugPolygon );
+	} else if ( r_debugSurface->integer == 2 ) {
+		GL_Cull( CT_TWO_SIDED );
+		ri.SV_BotDrawDebugPolygons( R_DebugPolygon );
+	}
 }
 
 
@@ -1376,8 +1782,6 @@ void R_RenderView (viewParms_t *parms) {
 	// set viewParms.world
 	R_RotateForViewer ();
 
-	R_SetupProjection(&tr.viewParms, r_zproj->value, qtrue);
-
 	R_GenerateDrawSurfs();
 
 	// if we overflowed MAX_DRAWSURFS, the drawsurfs
@@ -1391,7 +1795,9 @@ void R_RenderView (viewParms_t *parms) {
 	R_SortDrawSurfs( tr.refdef.drawSurfs + firstDrawSurf, numDrawSurfs - firstDrawSurf );
 
 	// draw main system development information (surface outlines, etc)
+	R_FogOff();
 	R_DebugGraphics();
+	//RB_FogOn();
 }
 
 

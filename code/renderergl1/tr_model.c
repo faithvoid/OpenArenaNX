@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 // tr_models.c -- model loading and caching
@@ -26,7 +34,12 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define	LL(x) x=LittleLong(x)
 
 static qboolean R_LoadMD3(model_t *mod, int lod, void *buffer, const char *name );
+static qboolean R_LoadMDC( model_t *mod, int lod, void *buffer, const char *mod_name );
 static qboolean R_LoadMDR(model_t *mod, void *buffer, int filesize, const char *name );
+static qboolean R_LoadMDS( model_t *mod, void *buffer, const char *name );
+static qboolean R_LoadMDM( model_t *mod, void *buffer, const char *mod_name );
+static qboolean R_LoadMDX( model_t *mod, void *buffer, const char *mod_name );
+static qboolean R_LoadTAN( model_t *mod, void *buffer, const char *mod_name );
 
 /*
 ====================
@@ -73,6 +86,8 @@ qhandle_t R_RegisterMD3(const char *name, model_t *mod)
 		ident = LittleLong(* (unsigned *) buf.u);
 		if (ident == MD3_IDENT)
 			loaded = R_LoadMD3(mod, lod, buf.u, name);
+		else if (ident == MDC_IDENT)
+			loaded = R_LoadMDC( mod, lod, buf.u, name );
 		else
 			ri.Printf(PRINT_WARNING,"R_RegisterMD3: unknown fileid for %s\n", name);
 		
@@ -94,7 +109,10 @@ qhandle_t R_RegisterMD3(const char *name, model_t *mod)
 		for(lod--; lod >= 0; lod--)
 		{
 			mod->numLods++;
-			mod->md3[lod] = mod->md3[lod + 1];
+			if (mod->type == MOD_MESH)
+				mod->md3[lod] = mod->md3[lod + 1];
+			else
+				mod->mdc[lod] = mod->mdc[lod + 1];
 		}
 
 		return mod->index;
@@ -148,6 +166,47 @@ qhandle_t R_RegisterMDR(const char *name, model_t *mod)
 
 /*
 ====================
+R_RegisterMDS
+====================
+*/
+qhandle_t R_RegisterMDS(const char *name, model_t *mod)
+{
+	union {
+		unsigned *u;
+		void *v;
+	} buf;
+	int	ident;
+	qboolean loaded = qfalse;
+
+	ri.FS_ReadFile(name, (void **) &buf.v);
+	if(!buf.u)
+	{
+		mod->type = MOD_BAD;
+		return 0;
+	}
+	
+	ident = LittleLong(*(unsigned *)buf.u);
+	if(ident == MDS_IDENT)
+		loaded = R_LoadMDS(mod, buf.u, name);
+	else if(ident == MDM_IDENT)
+		loaded = R_LoadMDM(mod, buf.u, name);
+	else if(ident == MDX_IDENT)
+		loaded = R_LoadMDX(mod, buf.u, name);
+
+	ri.FS_FreeFile (buf.v);
+	
+	if(!loaded)
+	{
+		ri.Printf(PRINT_WARNING,"R_RegisterMDS: couldn't load file %s\n", name);
+		mod->type = MOD_BAD;
+		return 0;
+	}
+	
+	return mod->index;
+}
+
+/*
+====================
 R_RegisterIQM
 ====================
 */
@@ -181,6 +240,40 @@ qhandle_t R_RegisterIQM(const char *name, model_t *mod)
 	return mod->index;
 }
 
+/*
+====================
+R_RegisterTAN
+====================
+*/
+qhandle_t R_RegisterTAN(const char *name, model_t *mod)
+{
+	union {
+		unsigned *u;
+		void *v;
+	} buf;
+	qboolean loaded = qfalse;
+
+	ri.FS_ReadFile(name, (void **) &buf.v);
+	if(!buf.u)
+	{
+		mod->type = MOD_BAD;
+		return 0;
+	}
+	
+	loaded = R_LoadTAN(mod, buf.u, name);
+
+	ri.FS_FreeFile (buf.v);
+	
+	if(!loaded)
+	{
+		ri.Printf(PRINT_WARNING,"R_RegisterTAN: couldn't load tan file %s\n", name);
+		mod->type = MOD_BAD;
+		return 0;
+	}
+	
+	return mod->index;
+}
+
 
 typedef struct
 {
@@ -194,7 +287,12 @@ static modelExtToLoaderMap_t modelLoaders[ ] =
 {
 	{ "iqm", R_RegisterIQM },
 	{ "mdr", R_RegisterMDR },
-	{ "md3", R_RegisterMD3 }
+	{ "md3", R_RegisterMD3 },
+	{ "mdc", R_RegisterMD3 },
+	{ "mds", R_RegisterMDS },
+	{ "mdm", R_RegisterMDS },
+	{ "mdx", R_RegisterMDS },
+	{ "tan", R_RegisterTAN },
 };
 
 static int numModelLoaders = ARRAY_LEN(modelLoaders);
@@ -482,7 +580,7 @@ static qboolean R_LoadMD3 (model_t *mod, int lod, void *buffer, const char *mod_
         for ( j = 0 ; j < surf->numShaders ; j++, shader++ ) {
             shader_t	*sh;
 
-            sh = R_FindShader( shader->name, LIGHTMAP_NONE, qtrue );
+            sh = R_FindShader( shader->name, LIGHTMAP_NONE, MIP_RAW_IMAGE );
 			if ( sh->defaultShader ) {
 				shader->shaderIndex = 0;
 			} else {
@@ -524,6 +622,383 @@ static qboolean R_LoadMD3 (model_t *mod, int lod, void *buffer, const char *mod_
 	return qtrue;
 }
 
+//-------------------------------------------------------------------------------
+// Ridah, mesh compression
+float r_anormals[NUMMDCVERTEXNORMALS][3] = {
+#include "../renderercommon/anorms256.h"
+};
+
+/*
+=================
+R_LoadMDC
+=================
+*/
+static qboolean R_LoadMDC( model_t *mod, int lod, void *buffer, const char *mod_name ) {
+	int i, j;
+	mdcHeader_t         *pinmodel;
+	md3Frame_t          *frame;
+	mdcSurface_t        *surf;
+	md3Shader_t         *shader;
+	md3Triangle_t       *tri;
+	md3St_t             *st;
+	md3XyzNormal_t      *xyz;
+	mdcXyzCompressed_t  *xyzComp;
+	mdcTag_t            *tag;
+	short               *ps;
+	int version;
+	int size;
+
+	pinmodel = (mdcHeader_t *)buffer;
+
+	version = LittleLong( pinmodel->version );
+	if ( version != MDC_VERSION ) {
+		ri.Printf( PRINT_WARNING, "R_LoadMDC: %s has wrong version (%i should be %i)\n",
+				   mod_name, version, MDC_VERSION );
+		return qfalse;
+	}
+
+	mod->type = MOD_MDC;
+	size = LittleLong( pinmodel->ofsEnd );
+	mod->dataSize += size;
+	mod->mdc[lod] = ri.Hunk_Alloc( size, h_low );
+
+	memcpy( mod->mdc[lod], buffer, LittleLong( pinmodel->ofsEnd ) );
+
+	LL( mod->mdc[lod]->ident );
+	LL( mod->mdc[lod]->version );
+	LL( mod->mdc[lod]->numFrames );
+	LL( mod->mdc[lod]->numTags );
+	LL( mod->mdc[lod]->numSurfaces );
+	LL( mod->mdc[lod]->ofsFrames );
+	LL( mod->mdc[lod]->ofsTagNames );
+	LL( mod->mdc[lod]->ofsTags );
+	LL( mod->mdc[lod]->ofsSurfaces );
+	LL( mod->mdc[lod]->ofsEnd );
+	LL( mod->mdc[lod]->flags );
+	LL( mod->mdc[lod]->numSkins );
+
+
+	if ( mod->mdc[lod]->numFrames < 1 ) {
+		ri.Printf( PRINT_WARNING, "R_LoadMDC: %s has no frames\n", mod_name );
+		return qfalse;
+	}
+
+	// swap all the frames
+	frame = ( md3Frame_t * )( (byte *)mod->mdc[lod] + mod->mdc[lod]->ofsFrames );
+	for ( i = 0 ; i < mod->mdc[lod]->numFrames ; i++, frame++ ) {
+		frame->radius = LittleFloat( frame->radius );
+		if ( strstr( mod->name,"sherman" ) || strstr( mod->name, "mg42" ) ) {
+			frame->radius = 256;
+			for ( j = 0 ; j < 3 ; j++ ) {
+				frame->bounds[0][j] = 128;
+				frame->bounds[1][j] = -128;
+				frame->localOrigin[j] = LittleFloat( frame->localOrigin[j] );
+			}
+		} else
+		{
+			for ( j = 0 ; j < 3 ; j++ ) {
+				frame->bounds[0][j] = LittleFloat( frame->bounds[0][j] );
+				frame->bounds[1][j] = LittleFloat( frame->bounds[1][j] );
+				frame->localOrigin[j] = LittleFloat( frame->localOrigin[j] );
+			}
+		}
+	}
+
+	// swap all the tags
+	tag = ( mdcTag_t * )( (byte *)mod->mdc[lod] + mod->mdc[lod]->ofsTags );
+	if ( LittleLong( 1 ) != 1 ) {
+		for ( i = 0 ; i < mod->mdc[lod]->numTags * mod->mdc[lod]->numFrames ; i++, tag++ ) {
+			for ( j = 0 ; j < 3 ; j++ ) {
+				tag->xyz[j] = LittleShort( tag->xyz[j] );
+				tag->angles[j] = LittleShort( tag->angles[j] );
+			}
+		}
+	}
+
+	// swap all the surfaces
+	surf = ( mdcSurface_t * )( (byte *)mod->mdc[lod] + mod->mdc[lod]->ofsSurfaces );
+	for ( i = 0 ; i < mod->mdc[lod]->numSurfaces ; i++ ) {
+
+		LL( surf->ident );
+		LL( surf->flags );
+		LL( surf->numBaseFrames );
+		LL( surf->numCompFrames );
+		LL( surf->numShaders );
+		LL( surf->numTriangles );
+		LL( surf->ofsTriangles );
+		LL( surf->numVerts );
+		LL( surf->ofsShaders );
+		LL( surf->ofsSt );
+		LL( surf->ofsXyzNormals );
+		LL( surf->ofsXyzCompressed );
+		LL( surf->ofsFrameBaseFrames );
+		LL( surf->ofsFrameCompFrames );
+		LL( surf->ofsEnd );
+
+		if ( surf->numVerts >= SHADER_MAX_VERTEXES ) {
+			ri.Printf(PRINT_WARNING, "R_LoadMDC: %s has more than %i verts on %s (%i).\n",
+				mod_name, SHADER_MAX_VERTEXES - 1, surf->name[0] ? surf->name : "a surface",
+				surf->numVerts );
+			return qfalse;
+		}
+		if ( surf->numTriangles*3 >= SHADER_MAX_INDEXES ) {
+			ri.Printf(PRINT_WARNING, "R_LoadMDC: %s has more than %i triangles on %s (%i).\n",
+				mod_name, ( SHADER_MAX_INDEXES / 3) - 1, surf->name[0] ? surf->name : "a surface",
+				surf->numTriangles );
+			return qfalse;
+		}
+
+		// change to surface identifier
+		surf->ident = SF_MDC;
+
+		// lowercase the surface name so skin compares are faster
+		Q_strlwr( surf->name );
+
+		// strip off a trailing _1 or _2
+		// this is a crutch for q3data being a mess
+		j = strlen( surf->name );
+		if ( j > 2 && surf->name[j - 2] == '_' ) {
+			surf->name[j - 2] = 0;
+		}
+
+		// register the shaders
+		shader = ( md3Shader_t * )( (byte *)surf + surf->ofsShaders );
+		for ( j = 0 ; j < surf->numShaders ; j++, shader++ ) {
+			shader_t    *sh;
+
+			sh = R_FindShader( shader->name, LIGHTMAP_NONE, MIP_RAW_IMAGE );
+			if ( sh->defaultShader ) {
+				shader->shaderIndex = 0;
+			} else {
+				shader->shaderIndex = sh->index;
+			}
+		}
+
+		// Ridah, optimization, only do the swapping if we really need to
+		if ( LittleShort( 1 ) != 1 ) {
+
+			// swap all the triangles
+			tri = ( md3Triangle_t * )( (byte *)surf + surf->ofsTriangles );
+			for ( j = 0 ; j < surf->numTriangles ; j++, tri++ ) {
+				LL( tri->indexes[0] );
+				LL( tri->indexes[1] );
+				LL( tri->indexes[2] );
+			}
+
+			// swap all the ST
+			st = ( md3St_t * )( (byte *)surf + surf->ofsSt );
+			for ( j = 0 ; j < surf->numVerts ; j++, st++ ) {
+				st->st[0] = LittleFloat( st->st[0] );
+				st->st[1] = LittleFloat( st->st[1] );
+			}
+
+			// swap all the XyzNormals
+			xyz = ( md3XyzNormal_t * )( (byte *)surf + surf->ofsXyzNormals );
+			for ( j = 0 ; j < surf->numVerts * surf->numBaseFrames ; j++, xyz++ )
+			{
+				xyz->xyz[0] = LittleShort( xyz->xyz[0] );
+				xyz->xyz[1] = LittleShort( xyz->xyz[1] );
+				xyz->xyz[2] = LittleShort( xyz->xyz[2] );
+
+				xyz->normal = LittleShort( xyz->normal );
+			}
+
+			// swap all the XyzCompressed
+			xyzComp = ( mdcXyzCompressed_t * )( (byte *)surf + surf->ofsXyzCompressed );
+			for ( j = 0 ; j < surf->numVerts * surf->numCompFrames ; j++, xyzComp++ )
+			{
+				LL( xyzComp->ofsVec );
+			}
+
+			// swap the frameBaseFrames
+			ps = ( short * )( (byte *)surf + surf->ofsFrameBaseFrames );
+			for ( j = 0; j < mod->mdc[lod]->numFrames; j++, ps++ )
+			{
+				*ps = LittleShort( *ps );
+			}
+
+			// swap the frameCompFrames
+			ps = ( short * )( (byte *)surf + surf->ofsFrameCompFrames );
+			for ( j = 0; j < mod->mdc[lod]->numFrames; j++, ps++ )
+			{
+				*ps = LittleShort( *ps );
+			}
+		}
+		// done.
+
+		// find the next surface
+		surf = ( mdcSurface_t * )( (byte *)surf + surf->ofsEnd );
+	}
+
+	return qtrue;
+}
+
+// done.
+//-------------------------------------------------------------------------------
+
+/*
+=================
+R_LoadTAN
+=================
+*/
+static qboolean R_LoadTAN (model_t *mod, void *buffer, const char *mod_name ) {
+	int					i, j, k;
+	tanHeader_t			*pinmodel, *model;
+	tanFrame_t			*frame;
+	tanSurface_t		*surf;
+	md3Triangle_t		*tri;
+	md3St_t				*st;
+	tanXyzNormal_t		*xyz;
+	tanTagData_t		*tag;
+	int					version;
+	int					size;
+
+	pinmodel = (tanHeader_t *)buffer;
+
+	version = LittleLong (pinmodel->version);
+	if (version != TIKI_ANIM_VERSION) {
+		ri.Printf( PRINT_WARNING, "R_LoadTAN: %s has wrong version (%i should be %i)\n",
+				 mod_name, version, TIKI_ANIM_VERSION);
+		return qfalse;
+	}
+
+	mod->type = MOD_TAN;
+	size = LittleLong(pinmodel->ofsEnd);
+	mod->dataSize += size;
+	mod->modelData = model = ri.Hunk_Alloc( size, h_low );
+
+	Com_Memcpy (model, buffer, LittleLong(pinmodel->ofsEnd) );
+
+    LL(model->ident);
+    LL(model->version);
+    LL(model->numFrames);
+    LL(model->numTags);
+
+	if ( model->numTags > TIKI_MAX_TAGS ) {
+		ri.Printf( PRINT_WARNING, "R_LoadTAN: %s has %d tags (format is limited to %d)!\n",
+				 mod_name, model->numTags, TIKI_MAX_TAGS );
+		model->numTags = TIKI_MAX_TAGS;
+	}
+
+    LL(model->numSurfaces);
+    LL(model->ofsFrames);
+	for ( i = 0 ; i < model->numTags ; i++ ) {
+		LL(model->ofsTags[i]);
+	}
+    LL(model->ofsSurfaces);
+    LL(model->ofsEnd);
+	model->totaltime = LittleFloat( model->totaltime );
+	for ( i = 0 ; i < 3 ; i++ ) {
+		model->totaldelta[i] = LittleFloat( model->totaldelta[i] );
+	}
+
+	if ( model->numFrames < 1 ) {
+		ri.Printf( PRINT_WARNING, "R_LoadTAN: %s has no frames\n", mod_name );
+		return qfalse;
+	}
+    
+	// swap all the frames
+    frame = (tanFrame_t *) ( (byte *)model + model->ofsFrames );
+    for ( i = 0 ; i < model->numFrames ; i++, frame++) {
+    	frame->radius = LittleFloat( frame->radius );
+    	frame->frametime = LittleFloat( frame->frametime );
+        for ( j = 0 ; j < 3 ; j++ ) {
+            frame->bounds[0][j] = LittleFloat( frame->bounds[0][j] );
+            frame->bounds[1][j] = LittleFloat( frame->bounds[1][j] );
+			frame->scale[j] = LittleFloat( frame->scale[j] );
+			frame->offset[j] = LittleFloat( frame->offset[j] );
+			frame->delta[j] = LittleFloat( frame->delta[j] );
+        }
+	}
+
+	// swap all the tags
+	for ( i = 0; i < model->numTags; i++ ) {
+		tag = (tanTagData_t *) ( (byte *)model + model->ofsTags[i] + sizeof ( tanTag_t ) );
+		for ( j = 0 ; j < model->numFrames ; j++, tag++) {
+			for ( k = 0 ; k < 3 ; k++ ) {
+				tag->origin[k] = LittleFloat( tag->origin[k] );
+				tag->axis[0][k] = LittleFloat( tag->axis[0][k] );
+				tag->axis[1][k] = LittleFloat( tag->axis[1][k] );
+				tag->axis[2][k] = LittleFloat( tag->axis[2][k] );
+			}
+		}
+	}
+
+	// swap all the surfaces
+	surf = (tanSurface_t *) ( (byte *)model + model->ofsSurfaces );
+	for ( i = 0 ; i < model->numSurfaces ; i++) {
+
+        LL(surf->ident);
+        LL(surf->numFrames);
+        LL(surf->numTriangles);
+        LL(surf->ofsTriangles);
+        LL(surf->numVerts);
+        LL(surf->minLod);
+        LL(surf->ofsCollapseMap);
+        LL(surf->ofsSt);
+        LL(surf->ofsXyzNormals);
+        LL(surf->ofsEnd);
+
+		if ( surf->numVerts >= SHADER_MAX_VERTEXES ) {
+			ri.Printf(PRINT_WARNING, "R_LoadTAN: %s has more than %i verts on %s (%i).\n",
+				mod_name, SHADER_MAX_VERTEXES - 1, surf->name[0] ? surf->name : "a surface",
+				surf->numVerts );
+			return qfalse;
+		}
+		if ( surf->numTriangles*3 >= SHADER_MAX_INDEXES ) {
+			ri.Printf(PRINT_WARNING, "R_LoadTAN: %s has more than %i triangles on %s (%i).\n",
+				mod_name, ( SHADER_MAX_INDEXES / 3 ) - 1, surf->name[0] ? surf->name : "a surface",
+				surf->numTriangles );
+			return qfalse;
+		}
+	
+		// change to surface identifier
+		surf->ident = SF_TAN;
+
+		// lowercase the surface name so skin compares are faster
+		Q_strlwr( surf->name );
+
+		// strip off a trailing _1 or _2
+		// this is a crutch for q3data being a mess
+		j = strlen( surf->name );
+		if ( j > 2 && surf->name[j-2] == '_' ) {
+			surf->name[j-2] = 0;
+		}
+
+		// swap all the triangles
+		tri = (md3Triangle_t *) ( (byte *)surf + surf->ofsTriangles );
+		for ( j = 0 ; j < surf->numTriangles ; j++, tri++ ) {
+			LL(tri->indexes[0]);
+			LL(tri->indexes[1]);
+			LL(tri->indexes[2]);
+		}
+
+		// swap all the ST
+        st = (md3St_t *) ( (byte *)surf + surf->ofsSt );
+        for ( j = 0 ; j < surf->numVerts ; j++, st++ ) {
+            st->st[0] = LittleFloat( st->st[0] );
+            st->st[1] = LittleFloat( st->st[1] );
+        }
+
+		// swap all the XyzNormals
+        xyz = (tanXyzNormal_t *) ( (byte *)surf + surf->ofsXyzNormals );
+        for ( j = 0 ; j < surf->numVerts * surf->numFrames ; j++, xyz++ ) 
+		{
+			// ZTM: FIXME: TAN changed xyz to unsigned. can these still use LittleShort?
+            xyz->xyz[0] = LittleShort( xyz->xyz[0] );
+            xyz->xyz[1] = LittleShort( xyz->xyz[1] );
+            xyz->xyz[2] = LittleShort( xyz->xyz[2] );
+
+            xyz->normal = LittleShort( xyz->normal );
+        }
+
+
+		// find the next surface
+		surf = (tanSurface_t *)( (byte *)surf + surf->ofsEnd );
+	}
+    
+	return qtrue;
+}
 
 
 /*
@@ -747,7 +1222,7 @@ static qboolean R_LoadMDR( model_t *mod, void *buffer, int filesize, const char 
 			Q_strlwr( surf->name );
 
 			// register the shaders
-			sh = R_FindShader(surf->shader, LIGHTMAP_NONE, qtrue);
+			sh = R_FindShader(surf->shader, LIGHTMAP_NONE, MIP_RAW_IMAGE);
 			if ( sh->defaultShader ) {
 				surf->shaderIndex = 0;
 			} else {
@@ -867,6 +1342,479 @@ static qboolean R_LoadMDR( model_t *mod, void *buffer, int filesize, const char 
 }
 
 
+/*
+=================
+R_LoadMDS
+=================
+*/
+static qboolean R_LoadMDS( model_t *mod, void *buffer, const char *mod_name ) {
+	int i, j, k;
+	mdsHeader_t         *pinmodel, *mds;
+	mdsFrame_t          *frame;
+	mdsSurface_t        *surf;
+	mdsTriangle_t       *tri;
+	mdsVertex_t         *v;
+	mdsBoneInfo_t       *bi;
+	mdsTag_t            *tag;
+	int version;
+	int size;
+	shader_t            *sh;
+	int frameSize;
+	int                 *collapseMap, *boneref;
+
+	pinmodel = (mdsHeader_t *)buffer;
+
+	version = LittleLong( pinmodel->version );
+	if ( version != MDS_VERSION ) {
+		ri.Printf( PRINT_WARNING, "R_LoadMDS: %s has wrong version (%i should be %i)\n",
+				   mod_name, version, MDS_VERSION );
+		return qfalse;
+	}
+
+	mod->type = MOD_MDS;
+	size = LittleLong( pinmodel->ofsEnd );
+	mod->dataSize += size;
+	mds = mod->modelData = ri.Hunk_Alloc( size, h_low );
+
+	Com_Memcpy( mds, buffer, LittleLong(pinmodel->ofsEnd) );
+
+	LL( mds->ident );
+	LL( mds->version );
+	LL( mds->numFrames );
+	LL( mds->numBones );
+	LL( mds->numTags );
+	LL( mds->numSurfaces );
+	LL( mds->ofsFrames );
+	LL( mds->ofsBones );
+	LL( mds->ofsTags );
+	LL( mds->ofsEnd );
+	LL( mds->ofsSurfaces );
+	mds->lodBias = LittleFloat( mds->lodBias );
+	mds->lodScale = LittleFloat( mds->lodScale );
+	LL( mds->torsoParent );
+
+	if ( mds->numFrames < 1 ) {
+		ri.Printf( PRINT_WARNING, "R_LoadMDS: %s has no frames\n", mod_name );
+		return qfalse;
+	}
+
+	if ( LittleLong( 1 ) != 1 ) {
+		// swap all the frames
+		//frameSize = (int)( &((mdsFrame_t *)0)->bones[ mds->numBones ] );
+		frameSize = (int) ( sizeof( mdsFrame_t ) - sizeof( mdsBoneFrameCompressed_t ) + mds->numBones * sizeof( mdsBoneFrameCompressed_t ) );
+		for ( i = 0 ; i < mds->numFrames ; i++ ) {
+			frame = ( mdsFrame_t * )( (byte *)mds + mds->ofsFrames + i * frameSize );
+			frame->radius = LittleFloat( frame->radius );
+			for ( j = 0 ; j < 3 ; j++ ) {
+				frame->bounds[0][j] = LittleFloat( frame->bounds[0][j] );
+				frame->bounds[1][j] = LittleFloat( frame->bounds[1][j] );
+				frame->localOrigin[j] = LittleFloat( frame->localOrigin[j] );
+				frame->parentOffset[j] = LittleFloat( frame->parentOffset[j] );
+			}
+			for ( j = 0 ; j < mds->numBones * sizeof( mdsBoneFrameCompressed_t ) / sizeof( short ) ; j++ ) {
+				( (short *)frame->bones )[j] = LittleShort( ( (short *)frame->bones )[j] );
+			}
+		}
+
+		// swap all the tags
+		tag = ( mdsTag_t * )( (byte *)mds + mds->ofsTags );
+		for ( i = 0 ; i < mds->numTags ; i++, tag++ ) {
+			LL( tag->boneIndex );
+			tag->torsoWeight = LittleFloat( tag->torsoWeight );
+		}
+
+		// swap all the bones
+		for ( i = 0 ; i < mds->numBones ; i++, bi++ ) {
+			bi = ( mdsBoneInfo_t * )( (byte *)mds + mds->ofsBones + i * sizeof( mdsBoneInfo_t ) );
+			LL( bi->parent );
+			bi->torsoWeight = LittleFloat( bi->torsoWeight );
+			bi->parentDist = LittleFloat( bi->parentDist );
+			LL( bi->flags );
+		}
+	}
+
+	// swap all the surfaces
+	surf = ( mdsSurface_t * )( (byte *)mds + mds->ofsSurfaces );
+	for ( i = 0 ; i < mds->numSurfaces ; i++ ) {
+		if ( LittleLong( 1 ) != 1 ) {
+			LL( surf->ident );
+			LL( surf->shaderIndex );
+			LL( surf->minLod );
+			LL( surf->ofsHeader );
+			LL( surf->ofsCollapseMap );
+			LL( surf->numTriangles );
+			LL( surf->ofsTriangles );
+			LL( surf->numVerts );
+			LL( surf->ofsVerts );
+			LL( surf->numBoneReferences );
+			LL( surf->ofsBoneReferences );
+			LL( surf->ofsEnd );
+		}
+
+		// change to surface identifier
+		surf->ident = SF_MDS;
+
+		if ( surf->numVerts >= SHADER_MAX_VERTEXES ) {
+			ri.Printf(PRINT_WARNING, "R_LoadMDS: %s has more than %i verts on %s (%i).\n",
+					mod_name, SHADER_MAX_VERTEXES - 1, surf->name[0] ? surf->name : "a surface",
+					surf->numVerts );
+			return qfalse;
+		}
+		if ( surf->numTriangles * 3 >=  SHADER_MAX_INDEXES ) {
+			ri.Printf(PRINT_WARNING, "R_LoadMDS: %s has more than %i triangles on %s (%i).\n",
+					mod_name, ( SHADER_MAX_INDEXES / 3 ) - 1, surf->name[0] ? surf->name : "a surface",
+					surf->numTriangles );
+			return qfalse;
+		}
+
+		// register the shaders
+		if ( surf->shader[0] ) {
+			sh = R_FindShader( surf->shader, LIGHTMAP_NONE, MIP_RAW_IMAGE );
+			if ( sh->defaultShader ) {
+				surf->shaderIndex = 0;
+			} else {
+				surf->shaderIndex = sh->index;
+			}
+		} else {
+			surf->shaderIndex = 0;
+		}
+
+		if ( LittleLong( 1 ) != 1 ) {
+			// swap all the triangles
+			tri = ( mdsTriangle_t * )( (byte *)surf + surf->ofsTriangles );
+			for ( j = 0 ; j < surf->numTriangles ; j++, tri++ ) {
+				LL( tri->indexes[0] );
+				LL( tri->indexes[1] );
+				LL( tri->indexes[2] );
+			}
+
+			// swap all the vertexes
+			v = ( mdsVertex_t * )( (byte *)surf + surf->ofsVerts );
+			for ( j = 0 ; j < surf->numVerts ; j++ ) {
+				v->normal[0] = LittleFloat( v->normal[0] );
+				v->normal[1] = LittleFloat( v->normal[1] );
+				v->normal[2] = LittleFloat( v->normal[2] );
+
+				v->texCoords[0] = LittleFloat( v->texCoords[0] );
+				v->texCoords[1] = LittleFloat( v->texCoords[1] );
+
+				v->numWeights = LittleLong( v->numWeights );
+
+				for ( k = 0 ; k < v->numWeights ; k++ ) {
+					v->weights[k].boneIndex = LittleLong( v->weights[k].boneIndex );
+					v->weights[k].boneWeight = LittleFloat( v->weights[k].boneWeight );
+					v->weights[k].offset[0] = LittleFloat( v->weights[k].offset[0] );
+					v->weights[k].offset[1] = LittleFloat( v->weights[k].offset[1] );
+					v->weights[k].offset[2] = LittleFloat( v->weights[k].offset[2] );
+				}
+
+				// find the fixedParent for this vert (if exists)
+				v->fixedParent = -1;
+				if ( v->numWeights == 2 ) {
+					// find the closest parent
+					if ( VectorLength( v->weights[0].offset ) < VectorLength( v->weights[1].offset ) ) {
+						v->fixedParent = 0;
+					} else {
+						v->fixedParent = 1;
+					}
+					v->fixedDist = VectorLength( v->weights[v->fixedParent].offset );
+				}
+
+				v = (mdsVertex_t *)&v->weights[v->numWeights];
+			}
+
+			// swap the collapse map
+			collapseMap = ( int * )( (byte *)surf + surf->ofsCollapseMap );
+			for ( j = 0; j < surf->numVerts; j++, collapseMap++ ) {
+				*collapseMap = LittleLong( *collapseMap );
+			}
+
+			// swap the bone references
+			boneref = ( int * )( ( byte *)surf + surf->ofsBoneReferences );
+			for ( j = 0; j < surf->numBoneReferences; j++, boneref++ ) {
+				*boneref = LittleLong( *boneref );
+			}
+		}
+
+		// find the next surface
+		surf = ( mdsSurface_t * )( (byte *)surf + surf->ofsEnd );
+	}
+
+	return qtrue;
+}
+
+
+/*
+=================
+R_LoadMDM
+=================
+*/
+static qboolean R_LoadMDM( model_t *mod, void *buffer, const char *mod_name ) {
+	int i, j, k;
+	mdmHeader_t         *pinmodel, *mdm;
+//    mdmFrame_t			*frame;
+	mdmSurface_t        *surf;
+	mdmTriangle_t       *tri;
+	mdmVertex_t         *v;
+	mdmTag_t            *tag;
+	int version;
+	int size;
+	shader_t            *sh;
+	int                 *collapseMap, *boneref;
+
+	pinmodel = (mdmHeader_t *)buffer;
+
+	version = LittleLong( pinmodel->version );
+	if ( version != MDM_VERSION ) {
+		ri.Printf( PRINT_WARNING, "R_LoadMDM: %s has wrong version (%i should be %i)\n",
+				   mod_name, version, MDM_VERSION );
+		return qfalse;
+	}
+
+	mod->type = MOD_MDM;
+	size = LittleLong( pinmodel->ofsEnd );
+	mod->dataSize += size;
+	mdm = mod->modelData = ri.Hunk_Alloc( size, h_low );
+
+	memcpy( mdm, buffer, LittleLong( pinmodel->ofsEnd ) );
+
+	LL( mdm->ident );
+	LL( mdm->version );
+//    LL(mdm->numFrames);
+	LL( mdm->numTags );
+	LL( mdm->numSurfaces );
+//    LL(mdm->ofsFrames);
+	LL( mdm->ofsTags );
+	LL( mdm->ofsEnd );
+	LL( mdm->ofsSurfaces );
+	mdm->lodBias = LittleFloat( mdm->lodBias );
+	mdm->lodScale = LittleFloat( mdm->lodScale );
+
+/*	mdm->skel = RE_RegisterModel(mdm->bonesfile);
+	if ( !mdm->skel ) {
+		ri.Error (ERR_DROP, "R_LoadMDM: %s skeleton not found\n", mdm->bonesfile );
+	}
+
+	if ( mdm->numFrames < 1 ) {
+		ri.Printf( PRINT_WARNING, "R_LoadMDM: %s has no frames\n", mod_name );
+		return qfalse;
+	}*/
+
+	if ( LittleLong( 1 ) != 1 ) {
+		// swap all the frames
+		/*frameSize = (int) ( sizeof( mdmFrame_t ) );
+		for ( i = 0 ; i < mdm->numFrames ; i++ ) {
+			frame = (mdmFrame_t *) ( (byte *)mdm + mdm->ofsFrames + i * frameSize );
+			frame->radius = LittleFloat( frame->radius );
+			for ( j = 0 ; j < 3 ; j++ ) {
+				frame->bounds[0][j] = LittleFloat( frame->bounds[0][j] );
+				frame->bounds[1][j] = LittleFloat( frame->bounds[1][j] );
+				frame->localOrigin[j] = LittleFloat( frame->localOrigin[j] );
+				frame->parentOffset[j] = LittleFloat( frame->parentOffset[j] );
+			}
+		}*/
+
+		// swap all the tags
+		tag = ( mdmTag_t * )( (byte *)mdm + mdm->ofsTags );
+		for ( i = 0 ; i < mdm->numTags ; i++ ) {
+			int ii;
+			for ( ii = 0; ii < 3; ii++ )
+			{
+				tag->axis[ii][0] = LittleFloat( tag->axis[ii][0] );
+				tag->axis[ii][1] = LittleFloat( tag->axis[ii][1] );
+				tag->axis[ii][2] = LittleFloat( tag->axis[ii][2] );
+			}
+
+			LL( tag->boneIndex );
+			//tag->torsoWeight = LittleFloat( tag->torsoWeight );
+			tag->offset[0] = LittleFloat( tag->offset[0] );
+			tag->offset[1] = LittleFloat( tag->offset[1] );
+			tag->offset[2] = LittleFloat( tag->offset[2] );
+
+			LL( tag->numBoneReferences );
+			LL( tag->ofsBoneReferences );
+			LL( tag->ofsEnd );
+
+			// swap the bone references
+			boneref = ( int * )( ( byte *)tag + tag->ofsBoneReferences );
+			for ( j = 0; j < tag->numBoneReferences; j++, boneref++ ) {
+				*boneref = LittleLong( *boneref );
+			}
+
+			// find the next tag
+			tag = ( mdmTag_t * )( (byte *)tag + tag->ofsEnd );
+		}
+	}
+
+	// swap all the surfaces
+	surf = ( mdmSurface_t * )( (byte *)mdm + mdm->ofsSurfaces );
+	for ( i = 0 ; i < mdm->numSurfaces ; i++ ) {
+		if ( LittleLong( 1 ) != 1 ) {
+			//LL(surf->ident);
+			LL( surf->shaderIndex );
+			LL( surf->minLod );
+			LL( surf->ofsHeader );
+			LL( surf->ofsCollapseMap );
+			LL( surf->numTriangles );
+			LL( surf->ofsTriangles );
+			LL( surf->numVerts );
+			LL( surf->ofsVerts );
+			LL( surf->numBoneReferences );
+			LL( surf->ofsBoneReferences );
+			LL( surf->ofsEnd );
+		}
+
+		// change to surface identifier
+		surf->ident = SF_MDM;
+
+		if ( surf->numVerts >= SHADER_MAX_VERTEXES ) {
+			ri.Printf(PRINT_WARNING, "R_LoadMDM: %s has more than %i verts on %s (%i).\n",
+					mod_name, SHADER_MAX_VERTEXES - 1, surf->name[0] ? surf->name : "a surface",
+					surf->numVerts );
+			return qfalse;
+		}
+		if ( surf->numTriangles * 3 >=  SHADER_MAX_INDEXES ) {
+			ri.Printf(PRINT_WARNING, "R_LoadMDM: %s has more than %i triangles on %s (%i).\n",
+					mod_name, ( SHADER_MAX_INDEXES / 3 ) - 1, surf->name[0] ? surf->name : "a surface",
+					surf->numTriangles );
+			return qfalse;
+		}
+
+		// register the shaders
+		if ( surf->shader[0] ) {
+			sh = R_FindShader( surf->shader, LIGHTMAP_NONE, MIP_RAW_IMAGE );
+			if ( sh->defaultShader ) {
+				surf->shaderIndex = 0;
+			} else {
+				surf->shaderIndex = sh->index;
+			}
+		} else {
+			surf->shaderIndex = 0;
+		}
+
+		if ( LittleLong( 1 ) != 1 ) {
+			// swap all the triangles
+			tri = ( mdmTriangle_t * )( (byte *)surf + surf->ofsTriangles );
+			for ( j = 0 ; j < surf->numTriangles ; j++, tri++ ) {
+				LL( tri->indexes[0] );
+				LL( tri->indexes[1] );
+				LL( tri->indexes[2] );
+			}
+
+			// swap all the vertexes
+			v = ( mdmVertex_t * )( (byte *)surf + surf->ofsVerts );
+			for ( j = 0 ; j < surf->numVerts ; j++ ) {
+				v->normal[0] = LittleFloat( v->normal[0] );
+				v->normal[1] = LittleFloat( v->normal[1] );
+				v->normal[2] = LittleFloat( v->normal[2] );
+
+				v->texCoords[0] = LittleFloat( v->texCoords[0] );
+				v->texCoords[1] = LittleFloat( v->texCoords[1] );
+
+				v->numWeights = LittleLong( v->numWeights );
+
+				for ( k = 0 ; k < v->numWeights ; k++ ) {
+					v->weights[k].boneIndex = LittleLong( v->weights[k].boneIndex );
+					v->weights[k].boneWeight = LittleFloat( v->weights[k].boneWeight );
+					v->weights[k].offset[0] = LittleFloat( v->weights[k].offset[0] );
+					v->weights[k].offset[1] = LittleFloat( v->weights[k].offset[1] );
+					v->weights[k].offset[2] = LittleFloat( v->weights[k].offset[2] );
+				}
+
+				v = (mdmVertex_t *)&v->weights[v->numWeights];
+			}
+
+			// swap the collapse map
+			collapseMap = ( int * )( (byte *)surf + surf->ofsCollapseMap );
+			for ( j = 0; j < surf->numVerts; j++, collapseMap++ ) {
+				*collapseMap = LittleLong( *collapseMap );
+			}
+
+			// swap the bone references
+			boneref = ( int * )( ( byte *)surf + surf->ofsBoneReferences );
+			for ( j = 0; j < surf->numBoneReferences; j++, boneref++ ) {
+				*boneref = LittleLong( *boneref );
+			}
+		}
+
+		// find the next surface
+		surf = ( mdmSurface_t * )( (byte *)surf + surf->ofsEnd );
+	}
+
+	return qtrue;
+}
+
+/*
+=================
+R_LoadMDX
+=================
+*/
+static qboolean R_LoadMDX( model_t *mod, void *buffer, const char *mod_name ) {
+	int i, j;
+	mdxHeader_t                 *pinmodel, *mdx;
+	mdxFrame_t                  *frame;
+	mdxBoneInfo_t               *bi;
+	int version;
+	int size;
+	int frameSize;
+
+	pinmodel = (mdxHeader_t *)buffer;
+
+	version = LittleLong( pinmodel->version );
+	if ( version != MDX_VERSION ) {
+		ri.Printf( PRINT_WARNING, "R_LoadMDX: %s has wrong version (%i should be %i)\n",
+				   mod_name, version, MDX_VERSION );
+		return qfalse;
+	}
+
+	mod->type = MOD_MDX;
+	size = LittleLong( pinmodel->ofsEnd );
+	mod->dataSize += size;
+	mdx = mod->modelData = ri.Hunk_Alloc( size, h_low );
+
+	memcpy( mdx, buffer, LittleLong( pinmodel->ofsEnd ) );
+
+	LL( mdx->ident );
+	LL( mdx->version );
+	LL( mdx->numFrames );
+	LL( mdx->numBones );
+	LL( mdx->ofsFrames );
+	LL( mdx->ofsBones );
+	LL( mdx->ofsEnd );
+	LL( mdx->torsoParent );
+
+	if ( LittleLong( 1 ) != 1 ) {
+		// swap all the frames
+		//frameSize = (int)( &((mdxFrame_t *)0)->bones[ mdx->numBones ] );
+		frameSize = (int) ( sizeof( mdxFrame_t ) - sizeof( mdxBoneFrameCompressed_t ) + mdx->numBones * sizeof( mdxBoneFrameCompressed_t ) );
+		for ( i = 0 ; i < mdx->numFrames ; i++ ) {
+			frame = ( mdxFrame_t * )( (byte *)mdx + mdx->ofsFrames + i * frameSize );
+			frame->radius = LittleFloat( frame->radius );
+			for ( j = 0 ; j < 3 ; j++ ) {
+				frame->bounds[0][j] = LittleFloat( frame->bounds[0][j] );
+				frame->bounds[1][j] = LittleFloat( frame->bounds[1][j] );
+				frame->localOrigin[j] = LittleFloat( frame->localOrigin[j] );
+				frame->parentOffset[j] = LittleFloat( frame->parentOffset[j] );
+			}
+			for ( j = 0 ; j < mdx->numBones * sizeof( mdxBoneFrameCompressed_t ) / sizeof( short ) ; j++ ) {
+				( (short *)frame->bones )[j] = LittleShort( ( (short *)frame->bones )[j] );
+			}
+		}
+
+		// swap all the bones
+		for ( i = 0 ; i < mdx->numBones ; i++ ) {
+			bi = ( mdxBoneInfo_t * )( (byte *)mdx + mdx->ofsBones + i * sizeof( mdxBoneInfo_t ) );
+			LL( bi->parent );
+			bi->torsoWeight = LittleFloat( bi->torsoWeight );
+			bi->parentDist = LittleFloat( bi->parentDist );
+			LL( bi->flags );
+		}
+	}
+
+	return qtrue;
+}
+
+
 
 //=============================================================================
 
@@ -877,7 +1825,9 @@ void RE_BeginRegistration( glconfig_t *glconfigOut ) {
 
 	R_Init();
 
-	*glconfigOut = glConfig;
+	if ( glconfigOut ) {
+		*glconfigOut = glConfig;
+	}
 
 	R_IssuePendingRenderCommands();
 
@@ -944,123 +1894,322 @@ void R_Modellist_f( void ) {
 
 /*
 ================
-R_GetTag
+R_GetMD3Tag
 ================
 */
-static md3Tag_t *R_GetTag( md3Header_t *mod, int frame, const char *tagName ) {
-	md3Tag_t		*tag;
-	int				i;
+static int R_GetMD3TagIndex( md3Header_t *mod, const char *tagName, int startTagIndex ) {
+	md3Tag_t        *tag;
+	int             i;
 
-	if ( frame >= mod->numFrames ) {
-		// it is possible to have a bad frame while changing models, so don't error
-		frame = mod->numFrames - 1;
-	}
-
-	tag = (md3Tag_t *)((byte *)mod + mod->ofsTags) + frame * mod->numTags;
-	for ( i = 0 ; i < mod->numTags ; i++, tag++ ) {
+	// ZTM: NOTE: Technically the names could be different for each frame. :(
+	tag = (md3Tag_t *)((byte *)mod + mod->ofsTags)/* + frameNum * mod->numTags*/ + startTagIndex;
+	for ( i = startTagIndex ; i < mod->numTags ; i++, tag++ ) {
 		if ( !strcmp( tag->name, tagName ) ) {
-			return tag;	// found it
+			return i; // found it
 		}
 	}
 
-	return NULL;
+	return -1;
 }
 
-md3Tag_t *R_GetAnimTag( mdrHeader_t *mod, int framenum, const char *tagName, md3Tag_t * dest) 
-{
-	int				i, j, k;
-	int				frameSize;
-	mdrFrame_t		*frame;
-	mdrTag_t		*tag;
+static void R_GetMD3Tag( md3Header_t *mod, int frameNum, int tagIndex, orientation_t *outTag ) {
+	md3Tag_t        *tag;
+	int             i;
 
-	if ( framenum >= mod->numFrames ) 
-	{
+	if ( frameNum >= mod->numFrames ) {
 		// it is possible to have a bad frame while changing models, so don't error
-		framenum = mod->numFrames - 1;
+		frameNum = mod->numFrames - 1;
 	}
 
-	tag = (mdrTag_t *)((byte *)mod + mod->ofsTags);
-	for ( i = 0 ; i < mod->numTags ; i++, tag++ )
-	{
-		if ( !strcmp( tag->name, tagName ) )
-		{
-			Q_strncpyz(dest->name, tag->name, sizeof(dest->name));
+	assert( tagIndex >= 0 && tagIndex < mod->numTags );
 
-			// uncompressed model...
-			//
-			frameSize = (intptr_t)( &((mdrFrame_t *)0)->bones[ mod->numBones ] );
-			frame = (mdrFrame_t *)((byte *)mod + mod->ofsFrames + framenum * frameSize );
+	tag = (md3Tag_t *)((byte *)mod + mod->ofsTags) + frameNum * mod->numTags + tagIndex;
 
-			for (j = 0; j < 3; j++)
-			{
-				for (k = 0; k < 3; k++)
-					dest->axis[j][k]=frame->bones[tag->boneIndex].matrix[k][j];
-			}
+	VectorCopy( tag->origin, outTag->origin );
+	for ( i = 0; i < 3; i++ ) {
+		VectorCopy( tag->axis[i], outTag->axis[i] );
+	}
+}
 
-			dest->origin[0]=frame->bones[tag->boneIndex].matrix[0][3];
-			dest->origin[1]=frame->bones[tag->boneIndex].matrix[1][3];
-			dest->origin[2]=frame->bones[tag->boneIndex].matrix[2][3];				
+/*
+================
+R_GetMDCTag
+================
+*/
+static int R_GetMDCTagIndex( mdcHeader_t *mod, const char *tagName, int startTagIndex ) {
+	mdcTagName_t    *pTagName;
+	int             i;
 
-			return dest;
+	pTagName = ( mdcTagName_t * )( (byte *)mod + mod->ofsTagNames ) + startTagIndex;
+	for ( i = startTagIndex ; i < mod->numTags ; i++, pTagName++ ) {
+		if ( !strcmp( pTagName->name, tagName ) ) {
+			return i; // found it
 		}
 	}
 
-	return NULL;
+	return -1;
+}
+
+static void R_GetMDCTag( mdcHeader_t *mod, int frameNum, int tagIndex, orientation_t *outTag ) {
+	mdcTag_t        *tag;
+	int             i;
+	vec3_t          angles;
+
+	if ( frameNum >= mod->numFrames ) {
+		// it is possible to have a bad frame while changing models, so don't error
+		frameNum = mod->numFrames - 1;
+	}
+
+	assert( tagIndex >= 0 && tagIndex < mod->numTags );
+
+	tag = ( mdcTag_t * )( (byte *)mod + mod->ofsTags ) + frameNum * mod->numTags + tagIndex;
+
+	// uncompress the MDC tags into MD3 style tags
+	for ( i = 0; i < 3; i++ ) {
+		outTag->origin[i] = (float)tag->xyz[i] * MD3_XYZ_SCALE;
+		angles[i] = (float)tag->angles[i] * MDC_TAG_ANGLE_SCALE;
+	}
+
+	AnglesToAxis( angles, outTag->axis );
+}
+
+/*
+================
+R_GetTANTag
+================
+*/
+static int R_GetTANTagIndex( tanHeader_t *mod, const char *tagName, int startTagIndex ) {
+	tanTag_t        *tag;
+	int             i;
+
+	for ( i = startTagIndex ; i < mod->numTags ; i++ ) {
+		tag = ( tanTag_t * )( (byte *)mod + mod->ofsTags[i] );
+		if ( !strcmp( tag->name, tagName ) ) {
+			return i; // found it
+		}
+	}
+
+	return -1;
+}
+
+static void R_GetTANTag( tanHeader_t *mod, int frameNum, int tagIndex, orientation_t *outTag ) {
+	tanTagData_t    *tag;
+	int             i;
+
+	if ( frameNum >= mod->numFrames ) {
+		// it is possible to have a bad frame while changing models, so don't error
+		frameNum = mod->numFrames - 1;
+	}
+
+	assert( tagIndex >= 0 && tagIndex < mod->numTags );
+
+	tag = ( tanTagData_t * )( (byte *)mod + mod->ofsTags[tagIndex] + sizeof ( tanTag_t ) ) + frameNum;
+
+	VectorCopy( tag->origin, outTag->origin );
+	for ( i = 0; i < 3; i++ ) {
+		VectorCopy( tag->axis[i], outTag->axis[i] );
+	}
+}
+
+/*
+================
+R_GetMDRTag
+================
+*/
+static int R_GetMDRTagIndex( mdrHeader_t *mod, const char *tagName, int startTagIndex ) {
+	mdrTag_t        *tag;
+	int             i;
+
+	tag = (mdrTag_t *)((byte *)mod + mod->ofsTags) + startTagIndex;
+	for ( i = startTagIndex ; i < mod->numTags ; i++, tag++ ) {
+		if ( !strcmp( tag->name, tagName ) ) {
+			return i; // found it
+		}
+	}
+
+	return -1;
+}
+
+static void R_GetMDRTag( mdrHeader_t *mod, int frameNum, int tagIndex, orientation_t *outTag ) {
+	int             j, k;
+	int             frameSize;
+	mdrFrame_t      *frame;
+	mdrTag_t        *tag;
+
+	if ( frameNum >= mod->numFrames ) {
+		// it is possible to have a bad frame while changing models, so don't error
+		frameNum = mod->numFrames - 1;
+	}
+
+	assert( tagIndex >= 0 && tagIndex < mod->numTags );
+
+	tag = (mdrTag_t *)((byte *)mod + mod->ofsTags) + tagIndex;
+
+	// uncompressed model...
+	//
+	frameSize = (intptr_t)( &((mdrFrame_t *)0)->bones[ mod->numBones ] );
+	frame = (mdrFrame_t *)((byte *)mod + mod->ofsFrames + frameNum * frameSize );
+
+	outTag->origin[0] = frame->bones[tag->boneIndex].matrix[0][3];
+	outTag->origin[1] = frame->bones[tag->boneIndex].matrix[1][3];
+	outTag->origin[2] = frame->bones[tag->boneIndex].matrix[2][3];
+
+	for ( j = 0; j < 3; j++ ) {
+		for ( k = 0; k < 3; k++ ) {
+			outTag->axis[j][k] = frame->bones[tag->boneIndex].matrix[k][j];
+		}
+	}
 }
 
 /*
 ================
 R_LerpTag
+
+"tag" can be NULL if just checking if tag exists.
+
+"pTagIndex" if not NULL specifies that starting tag index to loop for tagName.
+"pTagIndex" will be set to the tag index of the lerped tag or -1 if not found.
+
+returns 1 if tag was found or 0 if not found
 ================
 */
-int R_LerpTag( orientation_t *tag, qhandle_t handle, int startFrame, int endFrame, 
-					 float frac, const char *tagName ) {
-	md3Tag_t	*start, *end;
-	md3Tag_t	start_space, end_space;
+int R_LerpTag( orientation_t *tag, qhandle_t handle,
+					 qhandle_t frameModel, int startFrame,
+					 qhandle_t endFrameModel, int endFrame,
+					 float frac, const char *tagName,
+					 int *pTagIndex,
+					 const vec3_t *torsoAxis, // vec3_t[3]
+					 qhandle_t torsoFrameModel, int torsoStartFrame,
+					 qhandle_t torsoEndFrameModel, int torsoEndFrame,
+					 float torsoFrac )
+{
+	orientation_t	start, end;
+	qboolean		lerpTag;
 	int		i;
 	float		frontLerp, backLerp;
 	model_t		*model;
+	int			startTagIndex;
+	int			tagIndex;
+
+	if ( pTagIndex ) {
+		startTagIndex = *pTagIndex;
+
+		// specified invalid starting tag, return tag not found
+		if ( startTagIndex < 0 ) {
+			handle = 0;
+		}
+	} else {
+		startTagIndex = 0;
+	}
 
 	model = R_GetModelByHandle( handle );
-	if ( !model->md3[0] )
+
+	if ( model->type == MOD_MESH )
 	{
-		if(model->type == MOD_MDR)
-		{
-			start = R_GetAnimTag((mdrHeader_t *) model->modelData, startFrame, tagName, &start_space);
-			end = R_GetAnimTag((mdrHeader_t *) model->modelData, endFrame, tagName, &end_space);
+		lerpTag = qtrue;
+		tagIndex = R_GetMD3TagIndex( model->md3[0], tagName, startTagIndex );
+
+		if ( tagIndex >= 0 && tag ) {
+			R_GetMD3Tag( model->md3[0], startFrame, tagIndex, &start );
+			R_GetMD3Tag( model->md3[0], endFrame, tagIndex, &end );
 		}
-		else if( model->type == MOD_IQM ) {
-			return R_IQMLerpTag( tag, model->modelData,
-					startFrame, endFrame,
-					frac, tagName );
-		} else {
-			start = end = NULL;
+	}
+	else if ( model->type == MOD_MDR )
+	{
+		lerpTag = qtrue;
+		tagIndex = R_GetMDRTagIndex( (mdrHeader_t *) model->modelData, tagName, startTagIndex );
+
+		if ( tagIndex >= 0 && tag ) {
+			R_GetMDRTag( (mdrHeader_t *) model->modelData, startFrame, tagIndex, &start );
+			R_GetMDRTag( (mdrHeader_t *) model->modelData, endFrame, tagIndex, &end );
 		}
+	}
+	else if ( model->type == MOD_MDC )
+	{
+		lerpTag = qtrue;
+		tagIndex = R_GetMDCTagIndex( (mdcHeader_t *)model->mdc[0], tagName, startTagIndex );
+
+		if ( tagIndex >= 0 && tag ) {
+			R_GetMDCTag( (mdcHeader_t *)model->mdc[0], startFrame, tagIndex, &start );
+			R_GetMDCTag( (mdcHeader_t *)model->mdc[0], endFrame, tagIndex, &end );
+		}
+	}
+	else if ( model->type == MOD_TAN )
+	{
+		lerpTag = qtrue;
+		tagIndex = R_GetTANTagIndex( (tanHeader_t *)model->modelData, tagName, startTagIndex );
+
+		if ( tagIndex >= 0 && tag ) {
+			R_GetTANTag( (tanHeader_t *)model->modelData, startFrame, tagIndex, &start );
+			R_GetTANTag( (tanHeader_t *)model->modelData, endFrame, tagIndex, &end );
+		}
+	}
+	else if ( model->type == MOD_MDS )
+	{
+		lerpTag = qfalse;
+		tagIndex = R_GetMDSBoneTag( tag, model,
+				tagName, startTagIndex,
+				frameModel, startFrame,
+				endFrameModel, endFrame,
+				frac, torsoAxis,
+				torsoFrameModel, torsoStartFrame,
+				torsoEndFrameModel, torsoEndFrame,
+				torsoFrac );
+	}
+	else if ( model->type == MOD_MDM )
+	{
+		lerpTag = qfalse;
+		tagIndex = R_GetMDMBoneTag( tag, model,
+				tagName, startTagIndex,
+				frameModel, startFrame,
+				endFrameModel, endFrame,
+				frac, torsoAxis,
+				torsoFrameModel, torsoStartFrame,
+				torsoEndFrameModel, torsoEndFrame,
+				torsoFrac );
+	}
+	else if ( model->type == MOD_IQM )
+	{
+		lerpTag = qfalse;
+		tagIndex = R_IQMLerpTag( tag, model->modelData,
+				startTagIndex,
+				frameModel, startFrame,
+				endFrameModel, endFrame,
+				frac, tagName );
 	}
 	else
 	{
-		start = R_GetTag( model->md3[0], startFrame, tagName );
-		end = R_GetTag( model->md3[0], endFrame, tagName );
+		lerpTag = qfalse;
+		tagIndex = -1;
 	}
 
-	if ( !start || !end ) {
-		AxisClear( tag->axis );
-		VectorClear( tag->origin );
+	if ( pTagIndex ) {
+		*pTagIndex = tagIndex;
+	}
+
+	if ( tagIndex < 0 ) {
+		if ( tag ) {
+			AxisClear( tag->axis );
+			VectorClear( tag->origin );
+		}
 		return qfalse;
 	}
 
-	frontLerp = frac;
-	backLerp = 1.0f - frac;
+	if ( lerpTag && tag ) {
+		frontLerp = frac;
+		backLerp = 1.0f - frac;
 
-	for ( i = 0 ; i < 3 ; i++ ) {
-		tag->origin[i] = start->origin[i] * backLerp +  end->origin[i] * frontLerp;
-		tag->axis[0][i] = start->axis[0][i] * backLerp +  end->axis[0][i] * frontLerp;
-		tag->axis[1][i] = start->axis[1][i] * backLerp +  end->axis[1][i] * frontLerp;
-		tag->axis[2][i] = start->axis[2][i] * backLerp +  end->axis[2][i] * frontLerp;
+		for ( i = 0 ; i < 3 ; i++ ) {
+			tag->origin[i] = start.origin[i] * backLerp +  end.origin[i] * frontLerp;
+			tag->axis[0][i] = start.axis[0][i] * backLerp +  end.axis[0][i] * frontLerp;
+			tag->axis[1][i] = start.axis[1][i] * backLerp +  end.axis[1][i] * frontLerp;
+			tag->axis[2][i] = start.axis[2][i] * backLerp +  end.axis[2][i] * frontLerp;
+		}
+		VectorNormalize( tag->axis[0] );
+		VectorNormalize( tag->axis[1] );
+		VectorNormalize( tag->axis[2] );
 	}
-	VectorNormalize( tag->axis[0] );
-	VectorNormalize( tag->axis[1] );
-	VectorNormalize( tag->axis[2] );
+
 	return qtrue;
 }
 
@@ -1070,8 +2219,10 @@ int R_LerpTag( orientation_t *tag, qhandle_t handle, int startFrame, int endFram
 R_ModelBounds
 ====================
 */
-void R_ModelBounds( qhandle_t handle, vec3_t mins, vec3_t maxs ) {
+int R_ModelBounds( qhandle_t handle, vec3_t mins, vec3_t maxs, int startFrame, int endFrame, float frac ) {
 	model_t		*model;
+	float		frontLerp, backLerp;
+	int			i;
 
 	model = R_GetModelByHandle( handle );
 
@@ -1079,42 +2230,351 @@ void R_ModelBounds( qhandle_t handle, vec3_t mins, vec3_t maxs ) {
 		VectorCopy( model->bmodel->bounds[0], mins );
 		VectorCopy( model->bmodel->bounds[1], maxs );
 		
-		return;
+		return qtrue;
 	} else if (model->type == MOD_MESH) {
 		md3Header_t	*header;
-		md3Frame_t	*frame;
+		md3Frame_t	*start, *end;
 
 		header = model->md3[0];
-		frame = (md3Frame_t *) ((byte *)header + header->ofsFrames);
+		start = (md3Frame_t *) ((byte *)header + header->ofsFrames) + startFrame % header->numFrames;
+		end = (md3Frame_t *) ((byte *)header + header->ofsFrames) + endFrame % header->numFrames;
 
-		VectorCopy( frame->bounds[0], mins );
-		VectorCopy( frame->bounds[1], maxs );
+		if ( startFrame == endFrame ) {
+			VectorCopy( start->bounds[0], mins );
+			VectorCopy( start->bounds[1], maxs );
+		} else {
+			frontLerp = frac;
+			backLerp = 1.0f - frac;
+
+			for ( i = 0 ; i < 3 ; i++ ) {
+				mins[i] = start->bounds[0][i] * backLerp + end->bounds[0][i] * frontLerp;
+				maxs[i] = start->bounds[1][i] * backLerp + end->bounds[1][i] * frontLerp;
+			}
+		}
 		
-		return;
+		return qtrue;
+	} else if (model->type == MOD_MDC) {
+		mdcHeader_t	*header;
+		md3Frame_t	*start, *end;
+
+		header = model->mdc[0];
+		start = (md3Frame_t *) ((byte *)header + header->ofsFrames) + startFrame % header->numFrames;
+		end = (md3Frame_t *) ((byte *)header + header->ofsFrames) + endFrame % header->numFrames;
+
+		if ( startFrame == endFrame ) {
+			VectorCopy( start->bounds[0], mins );
+			VectorCopy( start->bounds[1], maxs );
+		} else {
+			frontLerp = frac;
+			backLerp = 1.0f - frac;
+
+			for ( i = 0 ; i < 3 ; i++ ) {
+				mins[i] = start->bounds[0][i] * backLerp + end->bounds[0][i] * frontLerp;
+				maxs[i] = start->bounds[1][i] * backLerp + end->bounds[1][i] * frontLerp;
+			}
+		}
+		
+		return qtrue;
+	} else if (model->type == MOD_TAN) {
+		tanHeader_t *header;
+		tanFrame_t	*start, *end;
+
+		header = (tanHeader_t *)model->modelData;
+		start = (tanFrame_t *) ((byte *)header + header->ofsFrames) + startFrame % header->numFrames;
+		end = (tanFrame_t *) ((byte *)header + header->ofsFrames) + endFrame % header->numFrames;
+
+		if ( startFrame == endFrame ) {
+			VectorCopy( start->bounds[0], mins );
+			VectorCopy( start->bounds[1], maxs );
+		} else {
+			frontLerp = frac;
+			backLerp = 1.0f - frac;
+
+			for ( i = 0 ; i < 3 ; i++ ) {
+				mins[i] = start->bounds[0][i] * backLerp + end->bounds[0][i] * frontLerp;
+				maxs[i] = start->bounds[1][i] * backLerp + end->bounds[1][i] * frontLerp;
+			}
+		}
+		
+		return qtrue;
 	} else if (model->type == MOD_MDR) {
 		mdrHeader_t	*header;
-		mdrFrame_t	*frame;
+		mdrFrame_t	*start, *end;
+		int frameSize;
 
 		header = (mdrHeader_t *)model->modelData;
-		frame = (mdrFrame_t *) ((byte *)header + header->ofsFrames);
 
-		VectorCopy( frame->bounds[0], mins );
-		VectorCopy( frame->bounds[1], maxs );
+		frameSize = (size_t)( &((mdrFrame_t *)0)->bones[ header->numBones ] );
+
+		start = (mdrFrame_t *)((byte *) header + header->ofsFrames + ( startFrame % header->numFrames ) * frameSize );
+		end = (mdrFrame_t *)((byte *) header + header->ofsFrames + ( endFrame % header->numFrames ) * frameSize );
+
+		if ( startFrame == endFrame ) {
+			VectorCopy( start->bounds[0], mins );
+			VectorCopy( start->bounds[1], maxs );
+		} else {
+			frontLerp = frac;
+			backLerp = 1.0f - frac;
+
+			for ( i = 0 ; i < 3 ; i++ ) {
+				mins[i] = start->bounds[0][i] * backLerp + end->bounds[0][i] * frontLerp;
+				maxs[i] = start->bounds[1][i] * backLerp + end->bounds[1][i] * frontLerp;
+			}
+		}
 		
-		return;
+		return qtrue;
+	} else if (model->type == MOD_MDS) {
+		mdsHeader_t	*header;
+		mdsFrame_t	*start, *end;
+		int frameSize;
+
+		header = (mdsHeader_t *)model->modelData;
+
+		frameSize = (size_t)( &((mdsFrame_t *)0)->bones[ header->numBones ] );
+
+		start = (mdsFrame_t *)((byte *) header + header->ofsFrames + ( startFrame % header->numFrames ) * frameSize );
+		end = (mdsFrame_t *)((byte *) header + header->ofsFrames + ( endFrame % header->numFrames ) * frameSize );
+
+		if ( startFrame == endFrame ) {
+			VectorCopy( start->bounds[0], mins );
+			VectorCopy( start->bounds[1], maxs );
+		} else {
+			frontLerp = frac;
+			backLerp = 1.0f - frac;
+
+			for ( i = 0 ; i < 3 ; i++ ) {
+				mins[i] = start->bounds[0][i] * backLerp + end->bounds[0][i] * frontLerp;
+				maxs[i] = start->bounds[1][i] * backLerp + end->bounds[1][i] * frontLerp;
+			}
+		}
+
+		return qtrue;
+	} else if (model->type == MOD_MDX) {
+		mdxHeader_t	*header;
+		mdxFrame_t	*start, *end;
+		int frameSize;
+
+		header = (mdxHeader_t *)model->modelData;
+
+		frameSize = (size_t)( &((mdxFrame_t *)0)->bones[ header->numBones ] );
+
+		start = (mdxFrame_t *)((byte *) header + header->ofsFrames + ( startFrame % header->numFrames ) * frameSize );
+		end = (mdxFrame_t *)((byte *) header + header->ofsFrames + ( endFrame % header->numFrames ) * frameSize );
+
+		if ( startFrame == endFrame ) {
+			VectorCopy( start->bounds[0], mins );
+			VectorCopy( start->bounds[1], maxs );
+		} else {
+			frontLerp = frac;
+			backLerp = 1.0f - frac;
+
+			for ( i = 0 ; i < 3 ; i++ ) {
+				mins[i] = start->bounds[0][i] * backLerp + end->bounds[0][i] * frontLerp;
+				maxs[i] = start->bounds[1][i] * backLerp + end->bounds[1][i] * frontLerp;
+			}
+		}
+
+		return qtrue;
 	} else if(model->type == MOD_IQM) {
 		iqmData_t *iqmData;
+		vec_t *startBounds, *endBounds;
 		
 		iqmData = model->modelData;
 
 		if(iqmData->bounds)
 		{
-			VectorCopy(iqmData->bounds, mins);
-			VectorCopy(iqmData->bounds + 3, maxs);
-			return;
+			if(iqmData->num_frames == 0) {
+				VectorCopy( iqmData->bounds, mins );
+				VectorCopy( iqmData->bounds+3, maxs );
+				return qtrue;
+			}
+
+			startBounds = iqmData->bounds + 6*(startFrame % iqmData->num_frames);
+			endBounds = iqmData->bounds + 6*(endFrame % iqmData->num_frames);
+
+			if ( startFrame == endFrame ) {
+				VectorCopy( startBounds, mins );
+				VectorCopy( startBounds+3, maxs );
+			} else {
+				frontLerp = frac;
+				backLerp = 1.0f - frac;
+
+				for ( i = 0 ; i < 3 ; i++ ) {
+					mins[i] = startBounds[i] * backLerp + endBounds[i] * frontLerp;
+					maxs[i] = startBounds[3+i] * backLerp + endBounds[3+i] * frontLerp;
+				}
+			}
+			return qtrue;
 		}
 	}
 
 	VectorClear( mins );
 	VectorClear( maxs );
+	return qfalse;
 }
+
+/*
+====================
+R_CustomSurfaceShader
+
+surfaceName must be lowercase
+
+Returns the shader to use for the surface, or tr.nodrawShader if the surface should not be rendered
+
+If there is a custom shader and skin, the skin will be used to see if the surface should
+be drawn (returning tr.nodrawShader if it should not) and then return the custom shader.
+====================
+*/
+shader_t *R_CustomSurfaceShader( const char *surfaceName, qhandle_t customShader, qhandle_t customSkin ) {
+	shader_t *shader = tr.defaultShader;
+
+	if ( customSkin > 0 && customSkin <= tr.refdef.numSkins ) {
+		skin_t *skin;
+		skinSurface_t *skinSurf;
+		int j;
+
+		skin = &tr.refdef.skins[customSkin - 1];
+
+		// match the surface name to something in the skin
+		for ( j = 0 ; j < skin->numSurfaces ; j++ ) {
+			skinSurf = &tr.skinSurfaces[ skin->surfaces[ j ] ];
+			// the names have both been lowercased
+			if ( !strcmp( skinSurf->name, surfaceName ) ) {
+				shader = skinSurf->shader;
+				break;
+			}
+		}
+
+		if ( shader == tr.nodrawShader ) {
+			return shader;
+		}
+	}
+
+	if ( customShader ) {
+		shader = R_GetShaderByHandle( customShader );
+	}
+
+	return shader;
+}
+
+
+/*
+=============================================================
+
+UNCOMPRESSING BONES
+
+=============================================================
+*/
+#define MC_BITS_X (16)
+#define MC_BITS_Y (16)
+#define MC_BITS_Z (16)
+#define MC_BITS_VECT (16)
+
+#define MC_SCALE_X (1.0f/64)
+#define MC_SCALE_Y (1.0f/64)
+#define MC_SCALE_Z (1.0f/64)
+
+
+#define MC_MASK_X ((1<<(MC_BITS_X))-1)
+#define MC_MASK_Y ((1<<(MC_BITS_Y))-1)
+#define MC_MASK_Z ((1<<(MC_BITS_Z))-1)
+#define MC_MASK_VECT ((1<<(MC_BITS_VECT))-1)
+
+#define MC_SCALE_VECT (1.0f/(float)((1<<(MC_BITS_VECT-1))-2))
+
+#define MC_POS_X (0)
+#define MC_SHIFT_X (0)
+
+#define MC_POS_Y ((((MC_BITS_X))/8))
+#define MC_SHIFT_Y ((((MC_BITS_X)%8)))
+
+#define MC_POS_Z ((((MC_BITS_X+MC_BITS_Y))/8))
+#define MC_SHIFT_Z ((((MC_BITS_X+MC_BITS_Y)%8)))
+
+#define MC_POS_V11 ((((MC_BITS_X+MC_BITS_Y+MC_BITS_Z))/8))
+#define MC_SHIFT_V11 ((((MC_BITS_X+MC_BITS_Y+MC_BITS_Z)%8)))
+
+#define MC_POS_V12 ((((MC_BITS_X+MC_BITS_Y+MC_BITS_Z+MC_BITS_VECT))/8))
+#define MC_SHIFT_V12 ((((MC_BITS_X+MC_BITS_Y+MC_BITS_Z+MC_BITS_VECT)%8)))
+
+#define MC_POS_V13 ((((MC_BITS_X+MC_BITS_Y+MC_BITS_Z+MC_BITS_VECT*2))/8))
+#define MC_SHIFT_V13 ((((MC_BITS_X+MC_BITS_Y+MC_BITS_Z+MC_BITS_VECT*2)%8)))
+
+#define MC_POS_V21 ((((MC_BITS_X+MC_BITS_Y+MC_BITS_Z+MC_BITS_VECT*3))/8))
+#define MC_SHIFT_V21 ((((MC_BITS_X+MC_BITS_Y+MC_BITS_Z+MC_BITS_VECT*3)%8)))
+
+#define MC_POS_V22 ((((MC_BITS_X+MC_BITS_Y+MC_BITS_Z+MC_BITS_VECT*4))/8))
+#define MC_SHIFT_V22 ((((MC_BITS_X+MC_BITS_Y+MC_BITS_Z+MC_BITS_VECT*4)%8)))
+
+#define MC_POS_V23 ((((MC_BITS_X+MC_BITS_Y+MC_BITS_Z+MC_BITS_VECT*5))/8))
+#define MC_SHIFT_V23 ((((MC_BITS_X+MC_BITS_Y+MC_BITS_Z+MC_BITS_VECT*5)%8)))
+
+#define MC_POS_V31 ((((MC_BITS_X+MC_BITS_Y+MC_BITS_Z+MC_BITS_VECT*6))/8))
+#define MC_SHIFT_V31 ((((MC_BITS_X+MC_BITS_Y+MC_BITS_Z+MC_BITS_VECT*6)%8)))
+
+#define MC_POS_V32 ((((MC_BITS_X+MC_BITS_Y+MC_BITS_Z+MC_BITS_VECT*7))/8))
+#define MC_SHIFT_V32 ((((MC_BITS_X+MC_BITS_Y+MC_BITS_Z+MC_BITS_VECT*7)%8)))
+
+#define MC_POS_V33 ((((MC_BITS_X+MC_BITS_Y+MC_BITS_Z+MC_BITS_VECT*8))/8))
+#define MC_SHIFT_V33 ((((MC_BITS_X+MC_BITS_Y+MC_BITS_Z+MC_BITS_VECT*8)%8)))
+
+/*
+=================
+MC_UnCompress
+=================
+*/
+void MC_UnCompress(float mat[3][4],const unsigned char * comp)
+{
+	int val;
+
+	val=(int)((unsigned short *)(comp))[0];
+	val-=1<<(MC_BITS_X-1);
+	mat[0][3]=((float)(val))*MC_SCALE_X;
+
+	val=(int)((unsigned short *)(comp))[1];
+	val-=1<<(MC_BITS_Y-1);
+	mat[1][3]=((float)(val))*MC_SCALE_Y;
+
+	val=(int)((unsigned short *)(comp))[2];
+	val-=1<<(MC_BITS_Z-1);
+	mat[2][3]=((float)(val))*MC_SCALE_Z;
+
+	val=(int)((unsigned short *)(comp))[3];
+	val-=1<<(MC_BITS_VECT-1);
+	mat[0][0]=((float)(val))*MC_SCALE_VECT;
+
+	val=(int)((unsigned short *)(comp))[4];
+	val-=1<<(MC_BITS_VECT-1);
+	mat[0][1]=((float)(val))*MC_SCALE_VECT;
+
+	val=(int)((unsigned short *)(comp))[5];
+	val-=1<<(MC_BITS_VECT-1);
+	mat[0][2]=((float)(val))*MC_SCALE_VECT;
+
+
+	val=(int)((unsigned short *)(comp))[6];
+	val-=1<<(MC_BITS_VECT-1);
+	mat[1][0]=((float)(val))*MC_SCALE_VECT;
+
+	val=(int)((unsigned short *)(comp))[7];
+	val-=1<<(MC_BITS_VECT-1);
+	mat[1][1]=((float)(val))*MC_SCALE_VECT;
+
+	val=(int)((unsigned short *)(comp))[8];
+	val-=1<<(MC_BITS_VECT-1);
+	mat[1][2]=((float)(val))*MC_SCALE_VECT;
+
+
+	val=(int)((unsigned short *)(comp))[9];
+	val-=1<<(MC_BITS_VECT-1);
+	mat[2][0]=((float)(val))*MC_SCALE_VECT;
+
+	val=(int)((unsigned short *)(comp))[10];
+	val-=1<<(MC_BITS_VECT-1);
+	mat[2][1]=((float)(val))*MC_SCALE_VECT;
+
+	val=(int)((unsigned short *)(comp))[11];
+	val-=1<<(MC_BITS_VECT-1);
+	mat[2][2]=((float)(val))*MC_SCALE_VECT;
+}
+

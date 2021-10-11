@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 #ifndef TR_COMMON_H
@@ -44,7 +52,11 @@ typedef enum
 	IMGFLAG_NOLIGHTSCALE   = 0x0020,
 	IMGFLAG_CLAMPTOEDGE    = 0x0040,
 	IMGFLAG_GENNORMALMAP   = 0x0080,
+	IMGFLAG_LIGHTMAP       = 0x0100,
+	IMGFLAG_PICMIP2        = 0x0200,
 } imgFlags_t;
+
+#define MIP_RAW_IMAGE ( IMGFLAG_MIPMAP | IMGFLAG_PICMIP )
 
 typedef struct image_s {
 	char		imgName[MAX_QPATH];		// game path, including extension
@@ -55,7 +67,7 @@ typedef struct image_s {
 	int			frameUsed;			// for texture usage in frame statistics
 
 	int			internalFormat;
-	int			TMU;				// only needed for voodoo2
+	int			TMU;
 
 	imgType_t   type;
 	imgFlags_t  flags;
@@ -63,24 +75,42 @@ typedef struct image_s {
 	struct image_s*	next;
 } image_t;
 
-// any change in the LIGHTMAP_* defines here MUST be reflected in
-// R_FindShader() in tr_bsp.c
-#define LIGHTMAP_2D         -4	// shader is for 2D rendering
-#define LIGHTMAP_BY_VERTEX  -3	// pre-lit triangle models
-#define LIGHTMAP_WHITEIMAGE -2
-#define LIGHTMAP_NONE       -1
+#ifdef DEDICATED
+typedef int GLenum;
+typedef int GLsizei;
+#endif
+typedef struct textureLevel_s {
+	GLenum  format;
+	int     width, height;
+	GLsizei size;
+	void    *data;
+} textureLevel_t;
 
 extern	refimport_t		ri;
 extern glconfig_t	glConfig;		// outside of TR since it shouldn't be cleared during ref re-init
 
-// These variables should live inside glConfig but can't because of
-// compatibility issues to the original ID vms.  If you release a stand-alone
-// game and your mod uses tr_types.h from this build you can safely move them
-// to the glconfig_t struct.
-extern qboolean  textureFilterAnisotropic;
-extern int       maxAnisotropy;
-extern float     displayAspect;
-extern qboolean  haveClampToEdge;
+// used by shader functions, including noise in renderercommon
+#define	FOG_TABLE_SIZE		256
+#define FUNCTABLE_SIZE		1024
+#define FUNCTABLE_SIZE2		10
+#define FUNCTABLE_MASK		(FUNCTABLE_SIZE-1)
+
+// dlight flags
+#define REF_ADDITIVE_DLIGHT	0x01 // texture detail is lost tho when the lightmap is dark
+#define REF_GRID_DLIGHT		0x02 // affect dynamic light grid
+#define REF_SURFACE_DLIGHT	0x04 // affect world surfaces
+#define REF_DIRECTED_DLIGHT	0x08 // global directional light, origin should be interpreted as a normal vector
+#define REF_VERTEX_DLIGHT	0x10 // ET style spherical dlight using vertex light rendering
+#define REF_FORCE_DLIGHT	0x20 // force this dlight under all conditions
+
+// surfaceParm flags (these are only used internally, not to be confused with surfaceFlags values in BSPs)
+#define	SURF_SKY				0x01	// lighting from environment map
+#define	SURF_NOIMPACT			0x02	// don't make missile explosions
+#define	SURF_NOMARKS			0x04	// don't leave missile marks
+#define	SURF_NOLIGHTMAP			0x08	// surface doesn't need a lightmap
+#define	SURF_POINTLIGHT			0x10	// generate lighting info at vertexes
+#define	SURF_NODLIGHT			0x20	// don't dlight even if solid (solid lava, skies)
+#define	SURF_FOG				0x40
 
 //
 // cvars
@@ -114,25 +144,32 @@ extern cvar_t *r_ext_max_anisotropy;
 extern cvar_t *r_stereoEnabled;
 
 extern	cvar_t	*r_saveFontData;
+extern	cvar_t	*r_fontBorderWidth;
+extern	cvar_t	*r_fontForceAutoHint;
 
 qboolean	R_GetModeInfo( int *width, int *height, float *windowAspect, int mode );
 
 float R_NoiseGet4f( float x, float y, float z, double t );
+int R_RandomOn( double t );
 void  R_NoiseInit( void );
 
-image_t     *R_FindImageFile( const char *name, imgType_t type, imgFlags_t flags );
+void	R_LoadImage( const char *name, int *numLevels, textureLevel_t **pic );
+image_t	*R_FindImageFile( const char *name, imgType_t type, imgFlags_t flags );
 image_t *R_CreateImage( const char *name, byte *pic, int width, int height, imgType_t type, imgFlags_t flags, int internalFormat );
+image_t *R_CreateImage2( const char *name, int numTexLevels, const textureLevel_t *pic, imgType_t type, imgFlags_t flags, int internalFormat );
 
 void R_IssuePendingRenderCommands( void );
-qhandle_t		 RE_RegisterShaderLightMap( const char *name, int lightmapIndex );
+qhandle_t		 RE_RegisterShaderEx( const char *name, int lightmapIndex, qboolean mipRawImage );
 qhandle_t		 RE_RegisterShader( const char *name );
 qhandle_t		 RE_RegisterShaderNoMip( const char *name );
+qhandle_t		 RE_RegisterShaderNoPicMip( const char *name );
 qhandle_t RE_RegisterShaderFromImage(const char *name, int lightmapIndex, image_t *image, qboolean mipRawImage);
 
 // font stuff
 void R_InitFreeType( void );
 void R_DoneFreeType( void );
-void RE_RegisterFont(const char *fontName, int pointSize, fontInfo_t *font);
+void RE_RegisterFont(const char *fontName, int pointSize, float borderWidth, qboolean forceAutoHint, fontInfo_t *vmFont, int vmFontBufSize);
+void R_FontList_f( void );
 
 /*
 =============================================================
@@ -142,11 +179,17 @@ IMAGE LOADERS
 =============================================================
 */
 
-void R_LoadBMP( const char *name, byte **pic, int *width, int *height );
-void R_LoadJPG( const char *name, byte **pic, int *width, int *height );
-void R_LoadPCX( const char *name, byte **pic, int *width, int *height );
-void R_LoadPNG( const char *name, byte **pic, int *width, int *height );
-void R_LoadTGA( const char *name, byte **pic, int *width, int *height );
+// pic points to an array of numLevels textureLevel_t structs that describe
+// the individual mip levels, the format is either GL_RGBA8 or a compressed
+// internalformat if the data is precompressed.
+
+void R_LoadBMP( const char *name, int *numLevels, textureLevel_t **pic );
+void R_LoadDDS( const char *name, int *numLevels, textureLevel_t **pic );
+void R_LoadFTX( const char *name, int *numLevels, textureLevel_t **pic );
+void R_LoadJPG( const char *name, int *numLevels, textureLevel_t **pic );
+void R_LoadPCX( const char *name, int *numLevels, textureLevel_t **pic );
+void R_LoadPNG( const char *name, int *numLevels, textureLevel_t **pic );
+void R_LoadTGA( const char *name, int *numLevels, textureLevel_t **pic );
 
 /*
 ====================================================================
@@ -167,5 +210,6 @@ void		GLimp_SetGamma( unsigned char red[256],
 		unsigned char green[256],
 		unsigned char blue[256] );
 
+qboolean	GLimp_ResizeWindow( int width, int height );
 
 #endif

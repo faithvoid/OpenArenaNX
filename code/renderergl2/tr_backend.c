@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 #include "tr_local.h"
@@ -370,9 +378,13 @@ void RB_BeginDrawingView (void) {
 	{
 		clearBits |= GL_STENCIL_BUFFER_BIT;
 	}
-	if ( r_fastsky->integer && !( backEnd.refdef.rdflags & RDF_NOWORLDMODEL ) )
-	{
-		clearBits |= GL_COLOR_BUFFER_BIT;	// FIXME: only if sky shaders have been used
+	if ( ( backEnd.refdef.maxFarClip > 1 || r_fastsky->integer )
+		&& !( backEnd.refdef.rdflags & (RDF_NOWORLDMODEL|RDF_NOSKY) ) ) {
+		clearBits |= GL_COLOR_BUFFER_BIT;
+
+		qglClearColor( backEnd.refdef.fogColor[ 0 ],
+					   backEnd.refdef.fogColor[ 1 ],
+					   backEnd.refdef.fogColor[ 2 ], 1.0 );
 	}
 
 	// clear to black for cube maps
@@ -416,6 +428,26 @@ void RB_BeginDrawingView (void) {
 	}
 }
 
+/*
+==================
+RB_EntityMergable
+==================
+*/
+qboolean RB_EntityMergable( int entityNum, const shader_t *shader ) {
+	if ( entityNum == REFENTITYNUM_WORLD ) {
+		return shader->entityMergable;
+	}
+
+	switch (backEnd.refdef.entities[entityNum].e.reType) {
+		case RT_SPRITE:
+		case RT_POLY_GLOBAL:
+			return shader->entityMergable;
+		case RT_MODEL:
+		case RT_POLY_LOCAL:
+		default:
+			return qfalse;
+	}
+}
 
 /*
 ==================
@@ -427,12 +459,15 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	int				fogNum, oldFogNum;
 	int				entityNum, oldEntityNum;
 	int				dlighted, oldDlighted;
+	int				sortOrder;
+	int				oldShaderIndex;
 	int				pshadowed, oldPshadowed;
 	int             cubemapIndex, oldCubemapIndex;
-	qboolean		depthRange, oldDepthRange, isCrosshair, wasCrosshair;
+	qboolean		depthRange, oldDepthRange;
+	qboolean		weaponProjection, oldWeaponProjection;
 	int				i;
 	drawSurf_t		*drawSurf;
-	int				oldSort;
+	uint64_t		oldSort;
 	double			originalTime;
 	FBO_t*			fbo = NULL;
 
@@ -447,16 +482,17 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 	oldShader = NULL;
 	oldFogNum = -1;
 	oldDepthRange = qfalse;
-	wasCrosshair = qfalse;
+	oldWeaponProjection = qfalse;
 	oldDlighted = qfalse;
 	oldPshadowed = qfalse;
 	oldCubemapIndex = -1;
 	oldSort = -1;
+	oldShaderIndex = -1;
 
 	backEnd.pc.c_surfaces += numDrawSurfs;
 
 	for (i = 0, drawSurf = drawSurfs ; i < numDrawSurfs ; i++, drawSurf++) {
-		if ( drawSurf->sort == oldSort && drawSurf->cubemapIndex == oldCubemapIndex) {
+		if ( drawSurf->sort == oldSort && drawSurf->shaderIndex == oldShaderIndex && drawSurf->cubemapIndex == oldCubemapIndex) {
 			if (backEnd.depthFill && shader && shader->sort != SS_OPAQUE)
 				continue;
 
@@ -465,7 +501,8 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 			continue;
 		}
 		oldSort = drawSurf->sort;
-		R_DecomposeSort( drawSurf->sort, &entityNum, &shader, &fogNum, &dlighted, &pshadowed );
+		oldShaderIndex = drawSurf->shaderIndex;
+		R_DecomposeSort( drawSurf, &shader, &sortOrder, &entityNum, &fogNum, &dlighted, &pshadowed );
 		cubemapIndex = drawSurf->cubemapIndex;
 
 		//
@@ -473,7 +510,7 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 		// a "entityMergable" shader is a shader that can have surfaces from separate
 		// entities merged into a single batch, like smoke and blood puff sprites
 		if ( shader != NULL && ( shader != oldShader || fogNum != oldFogNum || dlighted != oldDlighted || pshadowed != oldPshadowed || cubemapIndex != oldCubemapIndex
-			|| ( entityNum != oldEntityNum && !shader->entityMergable ) ) ) {
+			|| ( entityNum != oldEntityNum && !RB_EntityMergable( entityNum, shader) ) ) ) {
 			if (oldShader != NULL) {
 				RB_EndSurface();
 			}
@@ -493,14 +530,11 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 		// change the modelview matrix if needed
 		//
 		if ( entityNum != oldEntityNum ) {
-			depthRange = isCrosshair = qfalse;
+			depthRange = weaponProjection = qfalse;
 
 			if ( entityNum != REFENTITYNUM_WORLD ) {
 				backEnd.currentEntity = &backEnd.refdef.entities[entityNum];
-
-				// FIXME: e.shaderTime must be passed as int to avoid fp-precision loss issues
-				backEnd.refdef.floatTime = originalTime - (double)backEnd.currentEntity->e.shaderTime;
-
+				backEnd.refdef.floatTime = originalTime - backEnd.currentEntity->e.shaderTime * 0.001;
 				// we have to reset the shaderTime as well otherwise image animations start
 				// from the wrong frame
 				tess.shaderTime = backEnd.refdef.floatTime - tess.shader->timeOffset;
@@ -518,8 +552,13 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 					// hack the depth range to prevent view model from poking into walls
 					depthRange = qtrue;
 					
-					if(backEnd.currentEntity->e.renderfx & RF_CROSSHAIR)
-						isCrosshair = qtrue;
+					if(!(backEnd.currentEntity->e.renderfx & RF_CROSSHAIR)
+						&& (backEnd.viewParms.stereoFrame != STEREO_CENTER
+							|| backEnd.refdef.weapon_fov_x != backEnd.refdef.fov_x
+							|| backEnd.refdef.weapon_fov_y != backEnd.refdef.fov_y))
+					{
+						weaponProjection = qtrue;
+					}
 				}
 			} else {
 				backEnd.currentEntity = &tr.worldEntity;
@@ -534,48 +573,47 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 			GL_SetModelviewMatrix( backEnd.or.modelMatrix );
 
 			//
-			// change depthrange. Also change projection matrix so first person weapon does not look like coming
-			// out of the screen.
+			// change depthrange.
 			//
-			if (oldDepthRange != depthRange || wasCrosshair != isCrosshair)
+			if (oldDepthRange != depthRange)
 			{
 				if (depthRange)
 				{
-					if(backEnd.viewParms.stereoFrame != STEREO_CENTER)
-					{
-						if(isCrosshair)
-						{
-							if(oldDepthRange)
-							{
-								// was not a crosshair but now is, change back proj matrix
-								GL_SetProjectionMatrix( backEnd.viewParms.projectionMatrix );
-							}
-						}
-						else
-						{
-							viewParms_t temp = backEnd.viewParms;
-
-							R_SetupProjection(&temp, r_znear->value, 0, qfalse);
-
-							GL_SetProjectionMatrix( temp.projectionMatrix );
-						}
-					}
-
 					if(!oldDepthRange)
 						qglDepthRange (0, 0.3);
 				}
 				else
 				{
-					if(!wasCrosshair && backEnd.viewParms.stereoFrame != STEREO_CENTER)
-					{
-						GL_SetProjectionMatrix( backEnd.viewParms.projectionMatrix );
-					}
-
 					qglDepthRange (0, 1);
 				}
 
 				oldDepthRange = depthRange;
-				wasCrosshair = isCrosshair;
+			}
+
+			//
+			// change projection matrix so first person weapon does not look like coming
+			// out of the screen in anaglyph stereo 3D mode or for custom weapon fov.
+			//
+			if (weaponProjection && !oldWeaponProjection)
+			{
+				viewParms_t temp = backEnd.viewParms;
+
+				// use view weapon fov
+				temp.fovX = temp.weaponFovX;
+				temp.fovY = temp.weaponFovY;
+
+				R_SetupProjection(&temp, r_znear->value, 0, qfalse);
+
+				GL_SetProjectionMatrix( temp.projectionMatrix );
+
+				oldWeaponProjection = weaponProjection;
+			}
+			else if (!weaponProjection && oldWeaponProjection)
+			{
+				// change back proj matrix
+				GL_SetProjectionMatrix( backEnd.viewParms.projectionMatrix );
+
+				oldWeaponProjection = weaponProjection;
 			}
 
 			oldEntityNum = entityNum;
@@ -584,8 +622,6 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 		// add the triangles for this surface
 		rb_surfaceTable[ *drawSurf->surface ]( drawSurf->surface );
 	}
-
-	backEnd.refdef.floatTime = originalTime;
 
 	// draw the contents of the last shader batch
 	if (oldShader != NULL) {
@@ -596,6 +632,10 @@ void RB_RenderDrawSurfList( drawSurf_t *drawSurfs, int numDrawSurfs ) {
 		FBO_Bind(fbo);
 
 	// go back to the world modelview matrix
+	backEnd.currentEntity = &tr.worldEntity;
+	backEnd.refdef.floatTime = originalTime;
+	backEnd.or = backEnd.viewParms.world;
+	R_TransformDlights( backEnd.refdef.num_dlights, backEnd.refdef.dlights, &backEnd.or );
 
 	GL_SetModelviewMatrix( backEnd.viewParms.world.modelMatrix );
 
@@ -866,6 +906,241 @@ const void *RB_StretchPic ( const void *data ) {
 	return (const void *)(cmd + 1);
 }
 
+/*
+=============
+RB_Draw2dPolys
+=============
+*/
+const void* RB_Draw2dPolys( const void* data ) {
+	const poly2dCommand_t* cmd;
+	shader_t *shader;
+	int i;
+
+	cmd = (const poly2dCommand_t* )data;
+
+	// FIXME: HUGE hack
+	if (glRefConfig.framebufferObject) {
+		FBO_Bind(backEnd.framePostProcessed ? NULL : tr.renderFbo);
+	}
+
+	RB_SetGL2D();
+
+	shader = cmd->shader;
+	if ( shader != tess.shader ) {
+		if ( tess.numIndexes ) {
+			RB_EndSurface();
+		}
+		backEnd.currentEntity = &backEnd.entity2D;
+		RB_BeginSurface( shader, 0, 0 );
+	}
+
+	RB_CHECKOVERFLOW( cmd->numverts, ( cmd->numverts - 2 ) * 3 );
+
+	for ( i = 0; i < cmd->numverts - 2; i++ ) {
+		tess.indexes[tess.numIndexes + 0] = tess.numVertexes;
+		tess.indexes[tess.numIndexes + 1] = tess.numVertexes + i + 1;
+		tess.indexes[tess.numIndexes + 2] = tess.numVertexes + i + 2;
+		tess.numIndexes += 3;
+	}
+
+	for ( i = 0; i < cmd->numverts; i++ ) {
+		tess.xyz[ tess.numVertexes ][0] = cmd->verts[i].xyz[0];
+		tess.xyz[ tess.numVertexes ][1] = cmd->verts[i].xyz[1];
+		tess.xyz[ tess.numVertexes ][2] = 0;
+
+		tess.texCoords[ tess.numVertexes ][0] = cmd->verts[i].st[0];
+		tess.texCoords[ tess.numVertexes ][1] = cmd->verts[i].st[1];
+
+		{
+			uint16_t color[4];
+
+			VectorScale4(cmd->verts[i].modulate, 257, color);
+
+			VectorCopy4(color, tess.color[ tess.numVertexes ]);
+		}
+		tess.numVertexes++;
+	}
+
+	return (const void *)( cmd + 1 );
+}
+
+/*
+=============
+RB_RotatedPic
+=============
+*/
+const void *RB_RotatedPic( const void *data ) {
+	const stretchPicCommand_t   *cmd;
+	shader_t *shader;
+	int numVerts, numIndexes;
+	float angle;
+	float pi2 = M_PI * 2;
+
+	cmd = (const stretchPicCommand_t *)data;
+
+	// FIXME: HUGE hack
+	if (glRefConfig.framebufferObject) {
+		FBO_Bind(backEnd.framePostProcessed ? NULL : tr.renderFbo);
+	}
+
+	RB_SetGL2D();
+
+	shader = cmd->shader;
+	if ( shader != tess.shader ) {
+		if ( tess.numIndexes ) {
+			RB_EndSurface();
+		}
+		backEnd.currentEntity = &backEnd.entity2D;
+		RB_BeginSurface( shader, 0, 0 );
+	}
+
+	RB_CHECKOVERFLOW( 4, 6 );
+	numVerts = tess.numVertexes;
+	numIndexes = tess.numIndexes;
+
+	tess.numVertexes += 4;
+	tess.numIndexes += 6;
+
+	tess.indexes[ numIndexes ] = numVerts + 3;
+	tess.indexes[ numIndexes + 1 ] = numVerts + 0;
+	tess.indexes[ numIndexes + 2 ] = numVerts + 2;
+	tess.indexes[ numIndexes + 3 ] = numVerts + 2;
+	tess.indexes[ numIndexes + 4 ] = numVerts + 0;
+	tess.indexes[ numIndexes + 5 ] = numVerts + 1;
+
+	{
+		uint16_t color[4];
+
+		VectorScale4(backEnd.color2D, 257, color);
+
+		VectorCopy4(color, tess.color[ numVerts ]);
+		VectorCopy4(color, tess.color[ numVerts + 1]);
+		VectorCopy4(color, tess.color[ numVerts + 2]);
+		VectorCopy4(color, tess.color[ numVerts + 3 ]);
+	}
+
+	angle = cmd->angle * pi2;
+	tess.xyz[ numVerts ][0] = cmd->x + ( cos( angle ) * cmd->w );
+	tess.xyz[ numVerts ][1] = cmd->y + ( sin( angle ) * cmd->h );
+	tess.xyz[ numVerts ][2] = 0;
+
+	tess.texCoords[ numVerts ][0] = cmd->s1;
+	tess.texCoords[ numVerts ][1] = cmd->t1;
+
+	angle = cmd->angle * pi2 + 0.25 * pi2;
+	tess.xyz[ numVerts + 1 ][0] = cmd->x + ( cos( angle ) * cmd->w );
+	tess.xyz[ numVerts + 1 ][1] = cmd->y + ( sin( angle ) * cmd->h );
+	tess.xyz[ numVerts + 1 ][2] = 0;
+
+	tess.texCoords[ numVerts + 1 ][0] = cmd->s2;
+	tess.texCoords[ numVerts + 1 ][1] = cmd->t1;
+
+	angle = cmd->angle * pi2 + 0.50 * pi2;
+	tess.xyz[ numVerts + 2 ][0] = cmd->x + ( cos( angle ) * cmd->w );
+	tess.xyz[ numVerts + 2 ][1] = cmd->y + ( sin( angle ) * cmd->h );
+	tess.xyz[ numVerts + 2 ][2] = 0;
+
+	tess.texCoords[ numVerts + 2 ][0] = cmd->s2;
+	tess.texCoords[ numVerts + 2 ][1] = cmd->t2;
+
+	angle = cmd->angle * pi2 + 0.75 * pi2;
+	tess.xyz[ numVerts + 3 ][0] = cmd->x + ( cos( angle ) * cmd->w );
+	tess.xyz[ numVerts + 3 ][1] = cmd->y + ( sin( angle ) * cmd->h );
+	tess.xyz[ numVerts + 3 ][2] = 0;
+
+	tess.texCoords[ numVerts + 3 ][0] = cmd->s1;
+	tess.texCoords[ numVerts + 3 ][1] = cmd->t2;
+
+	return (const void *)( cmd + 1 );
+}
+
+/*
+==============
+RB_StretchPicGradient
+==============
+*/
+const void *RB_StretchPicGradient( const void *data ) {
+	const stretchPicCommand_t   *cmd;
+	shader_t *shader;
+	int numVerts, numIndexes;
+
+	cmd = (const stretchPicCommand_t *)data;
+
+	// FIXME: HUGE hack
+	if (glRefConfig.framebufferObject) {
+		FBO_Bind(backEnd.framePostProcessed ? NULL : tr.renderFbo);
+	}
+
+	RB_SetGL2D();
+
+	shader = cmd->shader;
+	if ( shader != tess.shader ) {
+		if ( tess.numIndexes ) {
+			RB_EndSurface();
+		}
+		backEnd.currentEntity = &backEnd.entity2D;
+		RB_BeginSurface( shader, 0, 0 );
+	}
+
+	RB_CHECKOVERFLOW( 4, 6 );
+	numVerts = tess.numVertexes;
+	numIndexes = tess.numIndexes;
+
+	tess.numVertexes += 4;
+	tess.numIndexes += 6;
+
+	tess.indexes[ numIndexes ] = numVerts + 3;
+	tess.indexes[ numIndexes + 1 ] = numVerts + 0;
+	tess.indexes[ numIndexes + 2 ] = numVerts + 2;
+	tess.indexes[ numIndexes + 3 ] = numVerts + 2;
+	tess.indexes[ numIndexes + 4 ] = numVerts + 0;
+	tess.indexes[ numIndexes + 5 ] = numVerts + 1;
+
+	{
+		uint16_t color[4];
+
+		VectorScale4(backEnd.color2D, 257, color);
+
+		VectorCopy4(color, tess.color[ numVerts ]);
+		VectorCopy4(color, tess.color[ numVerts + 1]);
+
+		VectorScale4(cmd->gradientColor, 257, color);
+
+		VectorCopy4(color, tess.color[ numVerts + 2]);
+		VectorCopy4(color, tess.color[ numVerts + 3 ]);
+	}
+
+	tess.xyz[ numVerts ][0] = cmd->x;
+	tess.xyz[ numVerts ][1] = cmd->y;
+	tess.xyz[ numVerts ][2] = 0;
+
+	tess.texCoords[ numVerts ][0] = cmd->s1;
+	tess.texCoords[ numVerts ][1] = cmd->t1;
+
+	tess.xyz[ numVerts + 1 ][0] = cmd->x + cmd->w;
+	tess.xyz[ numVerts + 1 ][1] = cmd->y;
+	tess.xyz[ numVerts + 1 ][2] = 0;
+
+	tess.texCoords[ numVerts + 1 ][0] = cmd->s2;
+	tess.texCoords[ numVerts + 1 ][1] = cmd->t1;
+
+	tess.xyz[ numVerts + 2 ][0] = cmd->x + cmd->w;
+	tess.xyz[ numVerts + 2 ][1] = cmd->y + cmd->h;
+	tess.xyz[ numVerts + 2 ][2] = 0;
+
+	tess.texCoords[ numVerts + 2 ][0] = cmd->s2;
+	tess.texCoords[ numVerts + 2 ][1] = cmd->t2;
+
+	tess.xyz[ numVerts + 3 ][0] = cmd->x;
+	tess.xyz[ numVerts + 3 ][1] = cmd->y + cmd->h;
+	tess.xyz[ numVerts + 3 ][2] = 0;
+
+	tess.texCoords[ numVerts + 3 ][0] = cmd->s1;
+	tess.texCoords[ numVerts + 3 ][1] = cmd->t2;
+
+	return (const void *)( cmd + 1 );
+}
+
 
 /*
 =============
@@ -1126,14 +1401,22 @@ const void	*RB_DrawSurfs( const void *data ) {
 
 	if (!isShadowView)
 	{
+		float scale;
+
 		RB_RenderDrawSurfList( cmd->drawSurfs, cmd->numDrawSurfs );
 
-		if (r_drawSun->integer)
-		{
-			RB_DrawSun(0.1, tr.sunShader);
+		if ( r_forceSunScale->value > 0 ) {
+			scale = r_forceSunScale->value;
+		} else {
+			scale = tr.sunShaderScale;
 		}
 
-		if (glRefConfig.framebufferObject && r_drawSunRays->integer)
+		if (r_drawSun->integer && scale > 0)
+		{
+			RB_DrawSun(scale * 0.2f, tr.sunShader);
+		}
+
+		if (glRefConfig.framebufferObject && r_drawSunRays->integer && scale > 0)
 		{
 			FBO_t *oldFbo = glState.currentFBO;
 			FBO_Bind(tr.sunRaysFbo);
@@ -1141,15 +1424,15 @@ const void	*RB_DrawSurfs( const void *data ) {
 			qglClearColor( 0.0f, 0.0f, 0.0f, 1.0f );
 			qglClear( GL_COLOR_BUFFER_BIT );
 
-			if (glRefConfig.occlusionQuery)
+			if (glRefConfig.occlusionQuery && r_drawSunRaysOcclusionQuery->integer)
 			{
 				tr.sunFlareQueryActive[tr.sunFlareQueryIndex] = qtrue;
 				qglBeginQuery(GL_SAMPLES_PASSED, tr.sunFlareQuery[tr.sunFlareQueryIndex]);
 			}
 
-			RB_DrawSun(0.3, tr.sunFlareShader);
+			RB_DrawSun(scale * 0.2f + 0.2f, tr.sunFlareShader);
 
-			if (glRefConfig.occlusionQuery)
+			if (glRefConfig.occlusionQuery && r_drawSunRaysOcclusionQuery->integer)
 			{
 				qglEndQuery(GL_SAMPLES_PASSED);
 			}
@@ -1261,7 +1544,7 @@ void RB_ShowImages( void ) {
 	qglFinish();
 
 	end = ri.Milliseconds();
-	ri.Printf( PRINT_ALL, "%i msec to draw all images\n", end - start );
+	ri.Printf( PRINT_DEVELOPER, "%i msec to draw all images\n", end - start );
 
 }
 
@@ -1748,6 +2031,15 @@ void RB_ExecuteRenderCommands( const void *data ) {
 			break;
 		case RC_STRETCH_PIC:
 			data = RB_StretchPic( data );
+			break;
+		case RC_ROTATED_PIC:
+			data = RB_RotatedPic( data );
+			break;
+		case RC_STRETCH_PIC_GRADIENT:
+			data = RB_StretchPicGradient( data );
+			break;
+		case RC_2DPOLYS:
+			data = RB_Draw2dPolys( data );
 			break;
 		case RC_DRAW_SURFS:
 			data = RB_DrawSurfs( data );

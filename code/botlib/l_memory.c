@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 
@@ -30,6 +38,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *****************************************************************************/
 
 #include "../qcommon/q_shared.h"
+#include "../qcommon/qcommon.h"
 #include "botlib.h"
 #include "l_log.h"
 #include "l_memory.h"
@@ -44,6 +53,48 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 int allocatedmemory;
 int totalmemorysize;
 int numblocks;
+
+/*
+==================
+BotImport_GetMemory
+==================
+*/
+static void *BotImport_GetMemory(int size) {
+	void *ptr;
+
+	ptr = Z_Malloc( size );
+	return ptr;
+}
+
+/*
+==================
+BotImport_FreeMemory
+==================
+*/
+static void BotImport_FreeMemory(void *ptr) {
+	Z_Free(ptr);
+}
+
+/*
+=================
+BotImport_HunkAlloc
+=================
+*/
+static void *BotImport_HunkAlloc( int size ) {
+	if( Hunk_CheckMark() ) {
+		Com_Error( ERR_DROP, "SV_Bot_HunkAlloc: Alloc with marks already set" );
+	}
+	return Hunk_Alloc( size, h_high );
+}
+
+/*
+=================
+BotImport_AvailableMemory
+=================
+*/
+static int BotImport_AvailableMemory( void ) {
+	return Z_AvailableMemory();
+}
 
 #ifdef MEMORYMANEGER
 
@@ -101,8 +152,8 @@ void *GetMemory(unsigned long size)
 {
 	void *ptr;
 	memoryblock_t *block;
-	assert(botimport.GetMemory);
-	ptr = botimport.GetMemory(size + sizeof(memoryblock_t));
+	//assert(BotImport_GetMemory);
+	ptr = BotImport_GetMemory(size + sizeof(memoryblock_t));
 	block = (memoryblock_t *) ptr;
 	block->id = MEM_ID;
 	block->ptr = (char *) ptr + sizeof(memoryblock_t);
@@ -154,7 +205,7 @@ void *GetHunkMemory(unsigned long size)
 	void *ptr;
 	memoryblock_t *block;
 
-	ptr = botimport.HunkAlloc(size + sizeof(memoryblock_t));
+	ptr = BotImport_HunkAlloc(size + sizeof(memoryblock_t));
 	block = (memoryblock_t *) ptr;
 	block->id = HUNK_ID;
 	block->ptr = (char *) ptr + sizeof(memoryblock_t);
@@ -206,19 +257,19 @@ memoryblock_t *BlockFromPointer(void *ptr, char *str)
 #ifdef MEMDEBUG
 		//char *crash = (char *) NULL;
 		//crash[0] = 1;
-		botimport.Print(PRT_FATAL, "%s: NULL pointer\n", str);
+		BotImport_Print(PRT_FATAL, "%s: NULL pointer\n", str);
 #endif // MEMDEBUG
 		return NULL;
 	} //end if
 	block = (memoryblock_t *) ((char *) ptr - sizeof(memoryblock_t));
 	if (block->id != MEM_ID && block->id != HUNK_ID)
 	{
-		botimport.Print(PRT_FATAL, "%s: invalid memory block\n", str);
+		BotImport_Print(PRT_FATAL, "%s: invalid memory block\n", str);
 		return NULL;
 	} //end if
 	if (block->ptr != ptr)
 	{
-		botimport.Print(PRT_FATAL, "%s: memory block pointer invalid\n", str);
+		BotImport_Print(PRT_FATAL, "%s: memory block pointer invalid\n", str);
 		return NULL;
 	} //end if
 	return block;
@@ -242,7 +293,7 @@ void FreeMemory(void *ptr)
 	//
 	if (block->id == MEM_ID)
 	{
-		botimport.FreeMemory(block);
+		BotImport_FreeMemory(block);
 	} //end if
 } //end of the function FreeMemory
 //===========================================================================
@@ -253,7 +304,7 @@ void FreeMemory(void *ptr)
 //===========================================================================
 int AvailableMemory(void)
 {
-	return botimport.AvailableMemory();
+	return BotImport_AvailableMemory();
 } //end of the function AvailableMemory
 //===========================================================================
 //
@@ -277,9 +328,9 @@ int MemoryByteSize(void *ptr)
 //===========================================================================
 void PrintUsedMemorySize(void)
 {
-	botimport.Print(PRT_MESSAGE, "total allocated memory: %d KB\n", allocatedmemory >> 10);
-	botimport.Print(PRT_MESSAGE, "total botlib memory: %d KB\n", totalmemorysize >> 10);
-	botimport.Print(PRT_MESSAGE, "total memory blocks: %d\n", numblocks);
+	BotImport_Print(PRT_MESSAGE, "total allocated memory: %d KB\n", allocatedmemory >> 10);
+	BotImport_Print(PRT_MESSAGE, "total botlib memory: %d KB\n", totalmemorysize >> 10);
+	BotImport_Print(PRT_MESSAGE, "total memory blocks: %d\n", numblocks);
 } //end of the function PrintUsedMemorySize
 //===========================================================================
 //
@@ -346,7 +397,7 @@ void *GetMemory(unsigned long size)
 	void *ptr;
 	unsigned long int *memid;
 
-	ptr = botimport.GetMemory(size + sizeof(unsigned long int));
+	ptr = BotImport_GetMemory(size + sizeof(unsigned long int));
 	if (!ptr) return NULL;
 	memid = (unsigned long int *) ptr;
 	*memid = MEM_ID;
@@ -388,7 +439,7 @@ void *GetHunkMemory(unsigned long size)
 	void *ptr;
 	unsigned long int *memid;
 
-	ptr = botimport.HunkAlloc(size + sizeof(unsigned long int));
+	ptr = BotImport_HunkAlloc(size + sizeof(unsigned long int));
 	if (!ptr) return NULL;
 	memid = (unsigned long int *) ptr;
 	*memid = HUNK_ID;
@@ -429,7 +480,7 @@ void FreeMemory(void *ptr)
 
 	if (*memid == MEM_ID)
 	{
-		botimport.FreeMemory(memid);
+		BotImport_FreeMemory(memid);
 	} //end if
 } //end of the function FreeMemory
 //===========================================================================
@@ -440,7 +491,7 @@ void FreeMemory(void *ptr)
 //===========================================================================
 int AvailableMemory(void)
 {
-	return botimport.AvailableMemory();
+	return BotImport_AvailableMemory();
 } //end of the function AvailableMemory
 //===========================================================================
 //

@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 
@@ -30,14 +38,10 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *****************************************************************************/
 
 #include "../qcommon/q_shared.h"
-#include "l_utils.h"
 #include "l_memory.h"
 #include "l_log.h"
 #include "l_crc.h"
 #include "l_libvar.h"
-#include "l_script.h"
-#include "l_precomp.h"
-#include "l_struct.h"
 #include "aasfile.h"
 #include "botlib.h"
 #include "be_aas.h"
@@ -425,7 +429,7 @@ void AAS_CreateReversedReachability(void)
 #ifdef DEBUG
 	int starttime;
 
-	starttime = Sys_MilliSeconds();
+	starttime = botimport.MilliSeconds();
 #endif
 	//free reversed links that have already been created
 	if (aasworld.reversedreachability) FreeMemory(aasworld.reversedreachability);
@@ -461,7 +465,7 @@ void AAS_CreateReversedReachability(void)
 		} //end for
 	} //end for
 #ifdef DEBUG
-	botimport.Print(PRT_MESSAGE, "reversed reachability %d msec\n", Sys_MilliSeconds() - starttime);
+	botimport.Print(PRT_MESSAGE, "reversed reachability %d msec\n", botimport.MilliSeconds() - starttime);
 #endif
 } //end of the function AAS_CreateReversedReachability
 //===========================================================================
@@ -508,7 +512,7 @@ void AAS_CalculateAreaTravelTimes(void)
 #ifdef DEBUG
 	int starttime;
 
-	starttime = Sys_MilliSeconds();
+	starttime = botimport.MilliSeconds();
 #endif
 	//if there are still area travel times, free the memory
 	if (aasworld.areatraveltimes) FreeMemory(aasworld.areatraveltimes);
@@ -556,7 +560,7 @@ void AAS_CalculateAreaTravelTimes(void)
 		} //end for
 	} //end for
 #ifdef DEBUG
-	botimport.Print(PRT_MESSAGE, "area travel times %d msec\n", Sys_MilliSeconds() - starttime);
+	botimport.Print(PRT_MESSAGE, "area travel times %d msec\n", botimport.MilliSeconds() - starttime);
 #endif
 } //end of the function AAS_CalculateAreaTravelTimes
 //===========================================================================
@@ -2006,7 +2010,7 @@ int AAS_NextModelReachability(int num, int modelnum)
 // Returns:				-
 // Changes Globals:		-
 //===========================================================================
-int AAS_RandomGoalArea(int areanum, int travelflags, int *goalareanum, vec3_t goalorigin)
+int AAS_RandomGoalArea(int areanum, int travelflags, int contentmask, int *goalareanum, vec3_t goalorigin)
 {
 	int i, n, t;
 	vec3_t start, end;
@@ -2038,7 +2042,7 @@ int AAS_RandomGoalArea(int areanum, int travelflags, int *goalareanum, vec3_t go
 					Log_Write("area %d center %f %f %f in solid?", n, start[0], start[1], start[2]);
 				VectorCopy(start, end);
 				end[2] -= 300;
-				trace = AAS_TraceClientBBox(start, end, PRESENCE_CROUCH, -1);
+				trace = AAS_TracePlayerBBox(start, end, PRESENCE_CROUCH, -1, contentmask);
 				if (!trace.startsolid && trace.fraction < 1 && AAS_PointAreaNum(trace.endpos) == n)
 				{
 					if (AAS_AreaGroundFaceArea(n) > 300)

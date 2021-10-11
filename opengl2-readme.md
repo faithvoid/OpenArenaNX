@@ -23,37 +23,13 @@ compatibility with existing Quake 3 mods.
 
 
 -------------------------------------------------------------------------------
-  INSTALLATION
--------------------------------------------------------------------------------
-
-For *nix:
-
-1. This should be identical to installing ioq3.  Check their README for more
-   details.
-
-   
-For Win32:
-
-1. Have a Quake 3 install, fully patched.
-
-2. Copy the following files into Quake 3's install directory: 
-     
-     ioquake3.x86.exe
-     renderer_opengl1_x86.dll
-     renderer_opengl2_x86.dll
-     
-   These can be found in build/release-mingw32-x86 after compiling, or bug
-   someone to release binaries.
-  
-
--------------------------------------------------------------------------------
   RUNNING
 -------------------------------------------------------------------------------
 
-1. Start ioquake3. (ioquake3.x86.exe on Win32)
+1. Start Spearmint. (spearmint_x86.exe on Win32)
  
 2. Open the console (the default key is tilde ~) and type 
-`/cl_renderer opengl2` and press enter
+`/com_renderer opengl2` and press enter
 `/vid_restart` then press enter again.
 
 3. Enjoy.
@@ -183,16 +159,6 @@ Cvars for advanced material usage:
                                      0 - No. (default)
                                      1 - Use parallax occlusion mapping.
                                      2 - Use relief mapping. (slower)
-
-*  `r_parallaxMapOffset`            - Set the parallax height offset.
-                                     0    - Values map to -255 - 0. (default)
-                                     0.5  - Values map to -127 - 127.
-                                     1.0  - Values map to 0 - 255.
-
-*  `r_parallaxMapShadows`           - Enable self-shadowing on parallax map
-                                   supported materials.
-                                     0 - No. (default)
-                                     1 - Yes.
 
 *  `r_baseSpecular`                 - Set the specular reflectance of materials
                                    which don't include a specular map or

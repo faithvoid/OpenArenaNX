@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 //
@@ -37,8 +45,7 @@ typedef enum {
 
 	K_BACKSPACE = 127,
 
-	K_COMMAND = 128,
-	K_CAPSLOCK,
+	K_CAPSLOCK = 128,
 	K_POWER,
 	K_PAUSE,
 
@@ -47,9 +54,17 @@ typedef enum {
 	K_LEFTARROW,
 	K_RIGHTARROW,
 
-	K_ALT,
-	K_CTRL,
-	K_SHIFT,
+	K_LEFTALT,
+	K_RIGHTALT,
+	K_LEFTCTRL,
+	K_RIGHTCTRL,
+	K_LEFTSHIFT,
+	K_RIGHTSHIFT,
+	K_LEFTSUPER,
+	K_RIGHTSUPER,
+	K_LEFTCOMMAND,
+	K_RIGHTCOMMAND,
+
 	K_INS,
 	K_DEL,
 	K_PGDN,
@@ -98,41 +113,158 @@ typedef enum {
 	K_MOUSE4,
 	K_MOUSE5,
 
-	K_MWHEELDOWN,
 	K_MWHEELUP,
+	K_MWHEELDOWN,
+	K_MWHEELLEFT,
+	K_MWHEELRIGHT,
 
-	K_JOY1,
-	K_JOY2,
-	K_JOY3,
-	K_JOY4,
-	K_JOY5,
-	K_JOY6,
-	K_JOY7,
-	K_JOY8,
-	K_JOY9,
-	K_JOY10,
-	K_JOY11,
-	K_JOY12,
-	K_JOY13,
-	K_JOY14,
-	K_JOY15,
-	K_JOY16,
-	K_JOY17,
-	K_JOY18,
-	K_JOY19,
-	K_JOY20,
-	K_JOY21,
-	K_JOY22,
-	K_JOY23,
-	K_JOY24,
-	K_JOY25,
-	K_JOY26,
-	K_JOY27,
-	K_JOY28,
-	K_JOY29,
-	K_JOY30,
-	K_JOY31,
-	K_JOY32,
+	// player 1
+	K_FIRST_JOY,
+
+	K_JOY_A = K_FIRST_JOY,
+	K_JOY_B,
+	K_JOY_X,
+	K_JOY_Y,
+	K_JOY_BACK,
+	K_JOY_GUIDE,
+	K_JOY_START,
+
+	K_JOY_DPAD_UP,
+	K_JOY_DPAD_RIGHT,
+	K_JOY_DPAD_DOWN,
+	K_JOY_DPAD_LEFT,
+
+	K_JOY_LEFTSHOULDER,
+	K_JOY_RIGHTSHOULDER,
+
+	K_JOY_LEFTTRIGGER,
+	K_JOY_RIGHTTRIGGER,
+
+	K_JOY_LEFTSTICK,
+	K_JOY_RIGHTSTICK,
+
+	K_JOY_LEFTSTICK_UP,
+	K_JOY_LEFTSTICK_RIGHT,
+	K_JOY_LEFTSTICK_DOWN,
+	K_JOY_LEFTSTICK_LEFT,
+
+	K_JOY_RIGHTSTICK_UP,
+	K_JOY_RIGHTSTICK_RIGHT,
+	K_JOY_RIGHTSTICK_DOWN,
+	K_JOY_RIGHTSTICK_LEFT,
+
+	K_LAST_JOY = K_JOY_RIGHTSTICK_LEFT,
+
+	// player 2
+	K_FIRST_2JOY,
+
+	K_2JOY_A = K_FIRST_2JOY,
+	K_2JOY_B,
+	K_2JOY_X,
+	K_2JOY_Y,
+	K_2JOY_BACK,
+	K_2JOY_GUIDE,
+	K_2JOY_START,
+
+	K_2JOY_DPAD_UP,
+	K_2JOY_DPAD_RIGHT,
+	K_2JOY_DPAD_DOWN,
+	K_2JOY_DPAD_LEFT,
+
+	K_2JOY_LEFTSHOULDER,
+	K_2JOY_RIGHTSHOULDER,
+
+	K_2JOY_LEFTTRIGGER,
+	K_2JOY_RIGHTTRIGGER,
+
+	K_2JOY_LEFTSTICK,
+	K_2JOY_RIGHTSTICK,
+
+	K_2JOY_LEFTSTICK_UP,
+	K_2JOY_LEFTSTICK_RIGHT,
+	K_2JOY_LEFTSTICK_DOWN,
+	K_2JOY_LEFTSTICK_LEFT,
+
+	K_2JOY_RIGHTSTICK_UP,
+	K_2JOY_RIGHTSTICK_RIGHT,
+	K_2JOY_RIGHTSTICK_DOWN,
+	K_2JOY_RIGHTSTICK_LEFT,
+
+	K_LAST_2JOY = K_2JOY_RIGHTSTICK_LEFT,
+
+	// player 3
+	K_FIRST_3JOY,
+
+	K_3JOY_A = K_FIRST_3JOY,
+	K_3JOY_B,
+	K_3JOY_X,
+	K_3JOY_Y,
+	K_3JOY_BACK,
+	K_3JOY_GUIDE,
+	K_3JOY_START,
+
+	K_3JOY_DPAD_UP,
+	K_3JOY_DPAD_RIGHT,
+	K_3JOY_DPAD_DOWN,
+	K_3JOY_DPAD_LEFT,
+
+	K_3JOY_LEFTSHOULDER,
+	K_3JOY_RIGHTSHOULDER,
+
+	K_3JOY_LEFTTRIGGER,
+	K_3JOY_RIGHTTRIGGER,
+
+	K_3JOY_LEFTSTICK,
+	K_3JOY_RIGHTSTICK,
+
+	K_3JOY_LEFTSTICK_UP,
+	K_3JOY_LEFTSTICK_RIGHT,
+	K_3JOY_LEFTSTICK_DOWN,
+	K_3JOY_LEFTSTICK_LEFT,
+
+	K_3JOY_RIGHTSTICK_UP,
+	K_3JOY_RIGHTSTICK_RIGHT,
+	K_3JOY_RIGHTSTICK_DOWN,
+	K_3JOY_RIGHTSTICK_LEFT,
+
+	K_LAST_3JOY = K_3JOY_RIGHTSTICK_LEFT,
+
+	// player 4
+	K_FIRST_4JOY,
+
+	K_4JOY_A = K_FIRST_4JOY,
+	K_4JOY_B,
+	K_4JOY_X,
+	K_4JOY_Y,
+	K_4JOY_BACK,
+	K_4JOY_GUIDE,
+	K_4JOY_START,
+
+	K_4JOY_DPAD_UP,
+	K_4JOY_DPAD_RIGHT,
+	K_4JOY_DPAD_DOWN,
+	K_4JOY_DPAD_LEFT,
+
+	K_4JOY_LEFTSHOULDER,
+	K_4JOY_RIGHTSHOULDER,
+
+	K_4JOY_LEFTTRIGGER,
+	K_4JOY_RIGHTTRIGGER,
+
+	K_4JOY_LEFTSTICK,
+	K_4JOY_RIGHTSTICK,
+
+	K_4JOY_LEFTSTICK_UP,
+	K_4JOY_LEFTSTICK_RIGHT,
+	K_4JOY_LEFTSTICK_DOWN,
+	K_4JOY_LEFTSTICK_LEFT,
+
+	K_4JOY_RIGHTSTICK_UP,
+	K_4JOY_RIGHTSTICK_RIGHT,
+	K_4JOY_RIGHTSTICK_DOWN,
+	K_4JOY_RIGHTSTICK_LEFT,
+
+	K_LAST_4JOY = K_4JOY_RIGHTSTICK_LEFT,
 
 	K_AUX1,
 	K_AUX2,
@@ -247,8 +379,167 @@ typedef enum {
 	K_WORLD_93,
 	K_WORLD_94,
 	K_WORLD_95,
+	K_WORLD_96,
+	K_WORLD_97,
+	K_WORLD_98,
+	K_WORLD_99,
+	K_WORLD_100,
+	K_WORLD_101,
+	K_WORLD_102,
+	K_WORLD_103,
+	K_WORLD_104,
+	K_WORLD_105,
+	K_WORLD_106,
+	K_WORLD_107,
+	K_WORLD_108,
+	K_WORLD_109,
+	K_WORLD_110,
+	K_WORLD_111,
+	K_WORLD_112,
+	K_WORLD_113,
+	K_WORLD_114,
+	K_WORLD_115,
+	K_WORLD_116,
+	K_WORLD_117,
+	K_WORLD_118,
+	K_WORLD_119,
+	K_WORLD_120,
+	K_WORLD_121,
+	K_WORLD_122,
+	K_WORLD_123,
+	K_WORLD_124,
+	K_WORLD_125,
+	K_WORLD_126,
+	K_WORLD_127,
+	K_WORLD_128,
+	K_WORLD_129,
+	K_WORLD_130,
+	K_WORLD_131,
+	K_WORLD_132,
+	K_WORLD_133,
+	K_WORLD_134,
+	K_WORLD_135,
+	K_WORLD_136,
+	K_WORLD_137,
+	K_WORLD_138,
+	K_WORLD_139,
+	K_WORLD_140,
+	K_WORLD_141,
+	K_WORLD_142,
+	K_WORLD_143,
+	K_WORLD_144,
+	K_WORLD_145,
+	K_WORLD_146,
+	K_WORLD_147,
+	K_WORLD_148,
+	K_WORLD_149,
+	K_WORLD_150,
+	K_WORLD_151,
+	K_WORLD_152,
+	K_WORLD_153,
+	K_WORLD_154,
+	K_WORLD_155,
+	K_WORLD_156,
+	K_WORLD_157,
+	K_WORLD_158,
+	K_WORLD_159,
+	K_WORLD_160,
+	K_WORLD_161,
+	K_WORLD_162,
+	K_WORLD_163,
+	K_WORLD_164,
+	K_WORLD_165,
+	K_WORLD_166,
+	K_WORLD_167,
+	K_WORLD_168,
+	K_WORLD_169,
+	K_WORLD_170,
+	K_WORLD_171,
+	K_WORLD_172,
+	K_WORLD_173,
+	K_WORLD_174,
+	K_WORLD_175,
+	K_WORLD_176,
+	K_WORLD_177,
+	K_WORLD_178,
+	K_WORLD_179,
+	K_WORLD_180,
+	K_WORLD_181,
+	K_WORLD_182,
+	K_WORLD_183,
+	K_WORLD_184,
+	K_WORLD_185,
+	K_WORLD_186,
+	K_WORLD_187,
+	K_WORLD_188,
+	K_WORLD_189,
+	K_WORLD_190,
+	K_WORLD_191,
+	K_WORLD_192,
+	K_WORLD_193,
+	K_WORLD_194,
+	K_WORLD_195,
+	K_WORLD_196,
+	K_WORLD_197,
+	K_WORLD_198,
+	K_WORLD_199,
+	K_WORLD_200,
+	K_WORLD_201,
+	K_WORLD_202,
+	K_WORLD_203,
+	K_WORLD_204,
+	K_WORLD_205,
+	K_WORLD_206,
+	K_WORLD_207,
+	K_WORLD_208,
+	K_WORLD_209,
+	K_WORLD_210,
+	K_WORLD_211,
+	K_WORLD_212,
+	K_WORLD_213,
+	K_WORLD_214,
+	K_WORLD_215,
+	K_WORLD_216,
+	K_WORLD_217,
+	K_WORLD_218,
+	K_WORLD_219,
+	K_WORLD_220,
+	K_WORLD_221,
+	K_WORLD_222,
+	K_WORLD_223,
+	K_WORLD_224,
+	K_WORLD_225,
+	K_WORLD_226,
+	K_WORLD_227,
+	K_WORLD_228,
+	K_WORLD_229,
+	K_WORLD_230,
+	K_WORLD_231,
+	K_WORLD_232,
+	K_WORLD_233,
+	K_WORLD_234,
+	K_WORLD_235,
+	K_WORLD_236,
+	K_WORLD_237,
+	K_WORLD_238,
+	K_WORLD_239,
+	K_WORLD_240,
+	K_WORLD_241,
+	K_WORLD_242,
+	K_WORLD_243,
+	K_WORLD_244,
+	K_WORLD_245,
+	K_WORLD_246,
+	K_WORLD_247,
+	K_WORLD_248,
+	K_WORLD_249,
+	K_WORLD_250,
+	K_WORLD_251,
+	K_WORLD_252,
+	K_WORLD_253,
+	K_WORLD_254,
+	K_WORLD_255,
 
-	K_SUPER,
 	K_COMPOSE,
 	K_MODE,
 	K_HELP,
@@ -260,50 +551,10 @@ typedef enum {
 	K_EURO,
 	K_UNDO,
 
-	// Gamepad controls
-	// Ordered to match SDL2 game controller buttons and axes
-	// Do not change this order without also changing IN_GamepadMove() in SDL_input.c
-	K_PAD0_A,
-	K_PAD0_B,
-	K_PAD0_X,
-	K_PAD0_Y,
-	K_PAD0_BACK,
-	K_PAD0_GUIDE,
-	K_PAD0_START,
-	K_PAD0_LEFTSTICK_CLICK,
-	K_PAD0_RIGHTSTICK_CLICK,
-	K_PAD0_LEFTSHOULDER,
-	K_PAD0_RIGHTSHOULDER,
-	K_PAD0_DPAD_UP,
-	K_PAD0_DPAD_DOWN,
-	K_PAD0_DPAD_LEFT,
-	K_PAD0_DPAD_RIGHT,
-
-	K_PAD0_LEFTSTICK_LEFT,
-	K_PAD0_LEFTSTICK_RIGHT,
-	K_PAD0_LEFTSTICK_UP,
-	K_PAD0_LEFTSTICK_DOWN,
-	K_PAD0_RIGHTSTICK_LEFT,
-	K_PAD0_RIGHTSTICK_RIGHT,
-	K_PAD0_RIGHTSTICK_UP,
-	K_PAD0_RIGHTSTICK_DOWN,
-	K_PAD0_LEFTTRIGGER,
-	K_PAD0_RIGHTTRIGGER,
-
 	// Pseudo-key that brings the console down
 	K_CONSOLE,
 
 	MAX_KEYS
 } keyNum_t;
-
-// MAX_KEYS replaces K_LAST_KEY, however some mods may have used K_LAST_KEY
-// in detecting binds, so we leave it defined to the old hardcoded value
-// of maxiumum keys to prevent mods from crashing older versions of the engine
-#define K_LAST_KEY              256
-
-// The menu code needs to get both key and char events, but
-// to avoid duplicating the paths, the char events are just
-// distinguished by or'ing in K_CHAR_FLAG (ugly)
-#define	K_CHAR_FLAG		1024
 
 #endif

@@ -12,7 +12,7 @@ attribute vec4 attr_BoneWeights;
 attribute vec4 attr_Color;
 attribute vec4 attr_TexCoord0;
 
-#if defined(USE_TCGEN)
+#if defined(USE_LIGHTMAP) || defined(USE_TCGEN)
 attribute vec4 attr_TexCoord1;
 #endif
 
@@ -21,6 +21,7 @@ uniform vec4   u_DiffuseTexOffTurb;
 
 #if defined(USE_TCGEN) || defined(USE_RGBAGEN)
 uniform vec3   u_LocalViewOrigin;
+uniform vec3   u_ModelLightDir;
 #endif
 
 #if defined(USE_TCGEN)
@@ -30,6 +31,7 @@ uniform vec3   u_TCGen0Vector1;
 #endif
 
 #if defined(USE_FOG)
+uniform int    u_FogType;
 uniform vec4   u_FogDistance;
 uniform vec4   u_FogDepth;
 uniform float  u_FogEyeT;
@@ -46,13 +48,19 @@ uniform mat4   u_ModelViewProjectionMatrix;
 uniform vec4   u_BaseColor;
 uniform vec4   u_VertColor;
 
+#if defined(USE_DEFORM_VERTEXES) || defined(USE_RGBAGEN)
+uniform vec3   u_FireRiseDir;
+#endif
+
 #if defined(USE_RGBAGEN)
 uniform int    u_ColorGen;
 uniform int    u_AlphaGen;
 uniform vec3   u_AmbientLight;
 uniform vec3   u_DirectedLight;
-uniform vec3   u_ModelLightDir;
 uniform float  u_PortalRange;
+uniform float  u_ZFadeLowest;
+uniform float  u_ZFadeHighest;
+uniform	vec3   u_DiffuseColor;
 #endif
 
 #if defined(USE_VERTEX_ANIMATION)
@@ -62,6 +70,9 @@ uniform mat4 u_BoneMatrix[MAX_GLSL_BONES];
 #endif
 
 varying vec2   var_DiffuseTex;
+#if defined(USE_LIGHTMAP)
+varying vec2   var_LightTex;
+#endif
 varying vec4   var_Color;
 
 #if defined(USE_DEFORM_VERTEXES)
@@ -72,6 +83,20 @@ vec3 DeformPosition(const vec3 pos, const vec3 normal, const vec2 st)
 	float phase =     u_DeformParams[2];
 	float frequency = u_DeformParams[3];
 	float spread =    u_DeformParams[4];
+
+	// a negative frequency is for Z deformation based on normal
+	float zDeformScale = 0;
+	if (frequency < 0)
+	{
+		zDeformScale = 1;
+		frequency *= -1;
+
+		if (frequency > 999)
+		{
+			frequency -= 999;
+			zDeformScale = -1;
+		}
+	}
 
 	if (u_DeformGen == DGEN_BULGE)
 	{
@@ -110,6 +135,20 @@ vec3 DeformPosition(const vec3 pos, const vec3 normal, const vec2 st)
 		func = sin(value);
 	}
 
+	if (zDeformScale != 0)
+	{
+		vec3 dir = u_FireRiseDir * (0.4 + 0.6 * u_FireRiseDir.z);
+		float nDot = dot(dir, normal);
+		float scale = base + func * amplitude;
+
+		if (nDot * scale > 0)
+		{
+			return pos + dir * nDot * scale * zDeformScale;
+		}
+
+		return pos;
+	}
+
 	return pos + normal * (base + func * amplitude);
 }
 #endif
@@ -133,6 +172,11 @@ vec2 GenTexCoords(int TCGen, vec3 position, vec3 normal, vec3 TCGenVector0, vec3
 	else if (TCGen == TCGEN_VECTOR)
 	{
 		tex = vec2(dot(position, TCGenVector0), dot(position, TCGenVector1));
+	}
+	else if (TCGen == TCGEN_ENVIRONMENT_CELSHADE_MAPPED)
+	{
+		tex.s = 0.5 + dot(normal, u_ModelLightDir) * 0.5;
+		tex.t = 0.5;
 	}
 	
 	return tex;
@@ -167,6 +211,12 @@ vec4 CalcColor(vec3 position, vec3 normal)
 
 		color.rgb = clamp(u_DirectedLight * incoming + u_AmbientLight, 0.0, 1.0);
 	}
+	else if (u_ColorGen == CGEN_LIGHTING_DIFFUSE_ENTITY)
+	{
+		float incoming = clamp(dot(normal, u_ModelLightDir), 0.0, 1.0);
+
+		color.rgb = clamp(u_DirectedLight * incoming + u_AmbientLight, 0.0, 1.0) * u_DiffuseColor;
+	}
 	
 	vec3 viewer = u_LocalViewOrigin - position;
 
@@ -183,6 +233,27 @@ vec4 CalcColor(vec3 position, vec3 normal)
 	{
 		color.a = clamp(length(viewer) / u_PortalRange, 0.0, 1.0);
 	}
+	else if (u_AlphaGen == AGEN_NORMALZFADE)
+	{
+		float nDot = dot(normal, u_FireRiseDir);
+		float halfRange = (u_ZFadeHighest - u_ZFadeLowest) / 2.0;
+
+		if (nDot < u_ZFadeHighest) {
+			if (nDot > u_ZFadeLowest) {
+				float frac;
+				if (nDot < u_ZFadeLowest + halfRange) {
+					frac = ( nDot - u_ZFadeLowest ) / halfRange;
+				} else {
+					frac = 1.0 - ( nDot - u_ZFadeLowest - halfRange ) / halfRange;
+				}
+				color.a *= clamp(frac, 0.0, 1.0);
+			} else {
+				color.a = 0;
+			}
+		} else {
+			color.a = 0;
+		}
+	}
 	
 	return color;
 }
@@ -191,16 +262,27 @@ vec4 CalcColor(vec3 position, vec3 normal)
 #if defined(USE_FOG)
 float CalcFog(vec3 position)
 {
-	float s = dot(vec4(position, 1.0), u_FogDistance) * 8.0;
+	float s = dot(vec4(position, 1.0), u_FogDistance);
 	float t = dot(vec4(position, 1.0), u_FogDepth);
 
 	float eyeOutside = float(u_FogEyeT < 0.0);
-	float fogged = float(t >= eyeOutside);
 
-	t += 1e-6;
-	t *= fogged / (t - u_FogEyeT * eyeOutside);
+	if ( u_FogType == FT_LINEAR ) {
+		if ( eyeOutside == 0 )
+			t += u_FogEyeT;
 
-	return s * t;
+		return s * t;
+	} else {
+		// FT_EXP
+		s *= 8.0;
+
+		float fogged = float(t >= eyeOutside);
+
+		t += 1e-6;
+		t *= fogged / (t - u_FogEyeT * eyeOutside);
+
+		return s * t;
+	}
 }
 #endif
 
@@ -239,6 +321,10 @@ void main()
 	var_DiffuseTex = ModTexCoords(tex, position, u_DiffuseTexMatrix, u_DiffuseTexOffTurb);
 #else
     var_DiffuseTex = tex;
+#endif
+
+#if defined(USE_LIGHTMAP)
+	var_LightTex = attr_TexCoord1.st;
 #endif
 
 #if defined(USE_RGBAGEN)

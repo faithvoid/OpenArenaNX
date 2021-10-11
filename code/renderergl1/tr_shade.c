@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 // tr_shade.c
@@ -214,7 +222,7 @@ R_BindAnimatedImage
 
 =================
 */
-static void R_BindAnimatedImage( textureBundle_t *bundle ) {
+void R_BindAnimatedImage( textureBundle_t *bundle ) {
 	int64_t index;
 
 	if ( bundle->isVideoMap ) {
@@ -237,10 +245,14 @@ static void R_BindAnimatedImage( textureBundle_t *bundle ) {
 		index = 0;	// may happen with shader time offsets
 	}
 
-	// Windows x86 doesn't load renderer DLL with 64 bit modulus
-	//index %= bundle->numImageAnimations;
-	while ( index >= bundle->numImageAnimations ) {
-		index -= bundle->numImageAnimations;
+	if ( bundle->loopingImageAnim ) {
+		// Windows x86 doesn't load renderer DLL with 64 bit modulus
+		//index %= bundle->numImageAnimations;
+		while ( index >= bundle->numImageAnimations ) {
+			index -= bundle->numImageAnimations;
+		}
+	} else if ( index >= bundle->numImageAnimations ) {
+		index = bundle->numImageAnimations-1;
 	}
 
 	GL_Bind( bundle->image[ index ] );
@@ -374,10 +386,10 @@ static void DrawMultitextured( shaderCommands_t *input, int stage ) {
 	qglEnable( GL_TEXTURE_2D );
 	qglEnableClientState( GL_TEXTURE_COORD_ARRAY );
 
-	if ( r_lightmap->integer ) {
+	if ( r_lightmap->integer && pStage->bundle[1].isLightmap ) {
 		GL_TexEnv( GL_REPLACE );
 	} else {
-		GL_TexEnv( tess.shader->multitextureEnv );
+		GL_TexEnv( pStage->multitextureEnv );
 	}
 
 	qglTexCoordPointer( 2, GL_FLOAT, 0, input->svars.texcoords[1] );
@@ -409,6 +421,7 @@ static void ProjectDlightTexture_scalar( void ) {
 	vec3_t	origin;
 	float	*texCoords;
 	byte	*colors;
+	int		*intColors;
 	byte	clipBits[SHADER_MAX_VERTEXES];
 	float	texCoordsArray[SHADER_MAX_VERTEXES][2];
 	byte	colorArray[SHADER_MAX_VERTEXES][4];
@@ -416,8 +429,11 @@ static void ProjectDlightTexture_scalar( void ) {
 	int		numIndexes;
 	float	scale;
 	float	radius;
+	float	radiusInverseCubed;
+	float	intensity, remainder;
 	vec3_t	floatColor;
 	float	modulate = 0.0f;
+	qboolean vertexLight;
 
 	if ( !backEnd.refdef.num_dlights ) {
 		return;
@@ -429,6 +445,10 @@ static void ProjectDlightTexture_scalar( void ) {
 		if ( !( tess.dlightBits & ( 1 << l ) ) ) {
 			continue;	// this surface definitely doesn't have any of this light
 		}
+
+		// clear colors
+		Com_Memset( colorArray, 0, sizeof( colorArray ) );
+
 		texCoords = texCoordsArray[0];
 		colors = colorArray[0];
 
@@ -436,6 +456,17 @@ static void ProjectDlightTexture_scalar( void ) {
 		VectorCopy( dl->transformed, origin );
 		radius = dl->radius;
 		scale = 1.0f / radius;
+		radiusInverseCubed = dl->radiusInverseCubed;
+		intensity = dl->intensity;
+
+		vertexLight = ( ( dl->flags & REF_DIRECTED_DLIGHT ) || ( dl->flags & REF_VERTEX_DLIGHT ) );
+
+		// directional lights have max intensity and washout remainder intensity
+		if ( dl->flags & REF_DIRECTED_DLIGHT ) {
+			remainder = intensity * 0.125;
+		} else {
+			remainder = 0.0f;
+		}
 
 		if(r_greyscale->integer)
 		{
@@ -468,53 +499,95 @@ static void ProjectDlightTexture_scalar( void ) {
 
 			backEnd.pc.c_dlightVertexes++;
 
-			texCoords[0] = 0.5f + dist[0] * scale;
-			texCoords[1] = 0.5f + dist[1] * scale;
-
-			if( !r_dlightBacks->integer &&
-					// dist . tess.normal[i]
-					( dist[0] * tess.normal[i][0] +
-					dist[1] * tess.normal[i][1] +
-					dist[2] * tess.normal[i][2] ) < 0.0f ) {
-				clip = 63;
-			} else {
-				if ( texCoords[0] < 0.0f ) {
-					clip |= 1;
-				} else if ( texCoords[0] > 1.0f ) {
-					clip |= 2;
+			// directional dlight, origin is a directional normal
+			if ( dl->flags & REF_DIRECTED_DLIGHT ) {
+				// twosided surfaces use absolute value of the calculated lighting
+				modulate = intensity * DotProduct( dl->origin, tess.normal[ i ] );
+				if ( tess.shader->cullType == CT_TWO_SIDED ) {
+					modulate = fabs( modulate );
 				}
-				if ( texCoords[1] < 0.0f ) {
-					clip |= 4;
-				} else if ( texCoords[1] > 1.0f ) {
-					clip |= 8;
-				}
-				texCoords[0] = texCoords[0];
-				texCoords[1] = texCoords[1];
+				modulate += remainder;
+			}
+			// spherical vertex lit dlight
+			else if ( dl->flags & REF_VERTEX_DLIGHT )
+			{
+				vec3_t	dir;
 
-				// modulate the strength based on the height and color
-				if ( dist[2] > radius ) {
-					clip |= 16;
-					modulate = 0.0f;
-				} else if ( dist[2] < -radius ) {
-					clip |= 32;
-					modulate = 0.0f;
+				dir[ 0 ] = radius - fabs( dist[ 0 ] );
+				if ( dir[ 0 ] <= 0.0f ) {
+					continue;
+				}
+				dir[ 1 ] = radius - fabs( dist[ 1 ] );
+				if ( dir[ 1 ] <= 0.0f ) {
+					continue;
+				}
+				dir[ 2 ] = radius - fabs( dist[ 2 ] );
+				if ( dir[ 2 ] <= 0.0f ) {
+					continue;
+				}
+
+				modulate = intensity * dir[ 0 ] * dir[ 1 ] * dir[ 2 ] * radiusInverseCubed;
+			}
+			// vertical cylinder dlight
+			else
+			{
+				texCoords[0] = 0.5f + dist[0] * scale;
+				texCoords[1] = 0.5f + dist[1] * scale;
+
+				if( !r_dlightBacks->integer &&
+						// dist . tess.normal[i]
+						( dist[0] * tess.normal[i][0] +
+						dist[1] * tess.normal[i][1] +
+						dist[2] * tess.normal[i][2] ) < 0.0f ) {
+					clip = 63;
 				} else {
-					dist[2] = Q_fabs(dist[2]);
-					if ( dist[2] < radius * 0.5f ) {
-						modulate = 1.0f;
+					if ( texCoords[0] < 0.0f ) {
+						clip |= 1;
+					} else if ( texCoords[0] > 1.0f ) {
+						clip |= 2;
+					}
+					if ( texCoords[1] < 0.0f ) {
+						clip |= 4;
+					} else if ( texCoords[1] > 1.0f ) {
+						clip |= 8;
+					}
+					texCoords[0] = texCoords[0];
+					texCoords[1] = texCoords[1];
+
+					// modulate the strength based on the height and color
+					if ( dist[2] > radius ) {
+						clip |= 16;
+						modulate = 0.0f;
+					} else if ( dist[2] < -radius ) {
+						clip |= 32;
+						modulate = 0.0f;
 					} else {
-						modulate = 2.0f * (radius - dist[2]) * scale;
+						dist[2] = Q_fabs(dist[2]);
+						if ( dist[2] < radius * 0.5f ) {
+							modulate = intensity;
+						} else {
+							modulate = intensity * 2.0f * (radius - dist[2]) * scale;
+						}
 					}
 				}
 			}
+
+			// optimizations
+			if ( vertexLight && modulate < ( 1.0f / 128.0f ) ) {
+				continue;
+			} else if ( modulate > 1.0f ) {
+				modulate = 1.0f;
+			}
+
 			clipBits[i] = clip;
-			colors[0] = ri.ftol(floatColor[0] * modulate);
-			colors[1] = ri.ftol(floatColor[1] * modulate);
-			colors[2] = ri.ftol(floatColor[2] * modulate);
+			colors[0] = Com_Clamp( 0, 255, ri.ftol(floatColor[0] * modulate) );
+			colors[1] = Com_Clamp( 0, 255, ri.ftol(floatColor[1] * modulate) );
+			colors[2] = Com_Clamp( 0, 255, ri.ftol(floatColor[2] * modulate) );
 			colors[3] = 255;
 		}
 
 		// build a list of triangles that need light
+		intColors = (int*) colorArray;
 		numIndexes = 0;
 		for ( i = 0 ; i < tess.numIndexes ; i += 3 ) {
 			int		a, b, c;
@@ -522,8 +595,14 @@ static void ProjectDlightTexture_scalar( void ) {
 			a = tess.indexes[i];
 			b = tess.indexes[i+1];
 			c = tess.indexes[i+2];
-			if ( clipBits[a] & clipBits[b] & clipBits[c] ) {
-				continue;	// not lighted
+			if ( vertexLight ) {
+				if ( !( intColors[ a ] | intColors[ b ] | intColors[ c ] ) ) {
+					continue;
+				}
+			} else {
+				if ( clipBits[a] & clipBits[b] & clipBits[c] ) {
+					continue;	// not lighted
+				}
 			}
 			hitIndexes[numIndexes] = a;
 			hitIndexes[numIndexes+1] = b;
@@ -535,24 +614,47 @@ static void ProjectDlightTexture_scalar( void ) {
 			continue;
 		}
 
-		qglEnableClientState( GL_TEXTURE_COORD_ARRAY );
-		qglTexCoordPointer( 2, GL_FLOAT, 0, texCoordsArray[0] );
+		if ( !vertexLight ) {
+			qglEnableClientState( GL_TEXTURE_COORD_ARRAY );
+			qglTexCoordPointer( 2, GL_FLOAT, 0, texCoordsArray[0] );
+		} else {
+			qglDisableClientState( GL_TEXTURE_COORD_ARRAY );
+		}
 
 		qglEnableClientState( GL_COLOR_ARRAY );
 		qglColorPointer( 4, GL_UNSIGNED_BYTE, 0, colorArray );
 
-		GL_Bind( tr.dlightImage );
-		// include GLS_DEPTHFUNC_EQUAL so alpha tested surfaces don't add light
-		// where they aren't rendered
-		if ( dl->additive ) {
-			GL_State( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE | GLS_DEPTHFUNC_EQUAL );
+		if ( dl->dlshader ) {
+			shader_t *dls = dl->dlshader;
+
+			for ( i = 0; i < dls->numUnfoggedPasses; i++ ) {
+				shaderStage_t *stage = dls->stages[i];
+				R_BindAnimatedImage( &dls->stages[i]->bundle[0] );
+				GL_State( stage->stateBits | GLS_DEPTHFUNC_EQUAL );
+				R_DrawElements( numIndexes, hitIndexes );
+				backEnd.pc.c_totalIndexes += numIndexes;
+				backEnd.pc.c_dlightIndexes += numIndexes;
+			}
+		} else {
+			R_FogOff();
+			if ( !vertexLight ) {
+				GL_Bind( tr.dlightImage );
+			} else {
+				GL_Bind( tr.whiteImage );
+			}
+			// include GLS_DEPTHFUNC_EQUAL so alpha tested surfaces don't add light
+			// where they aren't rendered
+			if ( dl->flags & REF_ADDITIVE_DLIGHT ) {
+				GL_State( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE | GLS_DEPTHFUNC_EQUAL );
+			}
+			else {
+				GL_State( GLS_SRCBLEND_DST_COLOR | GLS_DSTBLEND_ONE | GLS_DEPTHFUNC_EQUAL );
+			}
+			R_DrawElements( numIndexes, hitIndexes );
+			backEnd.pc.c_totalIndexes += numIndexes;
+			backEnd.pc.c_dlightIndexes += numIndexes;
+			RB_FogOn();
 		}
-		else {
-			GL_State( GLS_SRCBLEND_DST_COLOR | GLS_DSTBLEND_ONE | GLS_DEPTHFUNC_EQUAL );
-		}
-		R_DrawElements( numIndexes, hitIndexes );
-		backEnd.pc.c_totalIndexes += numIndexes;
-		backEnd.pc.c_dlightIndexes += numIndexes;
 	}
 }
 
@@ -577,7 +679,55 @@ Blends a fog texture on top of everything else
 */
 static void RB_FogPass( void ) {
 	fog_t		*fog;
+	unsigned	colorInt;
+	fogType_t	fogType;
 	int			i;
+
+	// no world, no fogging
+	if ( backEnd.refdef.rdflags & RDF_NOWORLDMODEL ) {
+		return;
+	}
+
+	if ( r_useGlFog->integer ) {
+		return;
+	}
+
+	if ( tess.shader->isSky ) {
+		fogType = tr.skyFogType;
+		colorInt = tr.skyFogColorInt;
+	} else {
+		fog = tr.world->fogs + tess.fogNum;
+
+		// Global fog
+		if ( fog->originalBrushNumber < 0 ) {
+			fogType = backEnd.refdef.fogType;
+			colorInt = backEnd.refdef.fogColorInt;
+		} else {
+			fogType = fog->shader->fogParms.fogType;
+			colorInt = fog->colorInt;
+		}
+	}
+
+	if ( fogType == FT_NONE ) {
+		return;
+	}
+
+	// check if any stage is fogged
+	if ( tess.shader->noFog ) {
+		int i;
+
+		for ( i = 0 ; i < MAX_SHADER_STAGES; i++ ) {
+			shaderStage_t *pStage = tess.xstages[i];
+
+			if ( !pStage ) {
+				return;
+			}
+
+			if ( pStage->isFogged ) {
+				break;
+			}
+		}
+	}
 
 	qglEnableClientState( GL_COLOR_ARRAY );
 	qglColorPointer( 4, GL_UNSIGNED_BYTE, 0, tess.svars.colors );
@@ -585,15 +735,17 @@ static void RB_FogPass( void ) {
 	qglEnableClientState( GL_TEXTURE_COORD_ARRAY);
 	qglTexCoordPointer( 2, GL_FLOAT, 0, tess.svars.texcoords[0] );
 
-	fog = tr.world->fogs + tess.fogNum;
-
 	for ( i = 0; i < tess.numVertexes; i++ ) {
-		* ( int * )&tess.svars.colors[i] = fog->colorInt;
+		* ( int * )&tess.svars.colors[i] = colorInt;
 	}
 
 	RB_CalcFogTexCoords( ( float * ) tess.svars.texcoords[0] );
 
-	GL_Bind( tr.fogImage );
+	if ( fogType == FT_LINEAR ) {
+		GL_Bind( tr.linearFogImage );
+	} else {
+		GL_Bind( tr.fogImage );
+	}
 
 	if ( tess.shader->fogPass == FP_EQUAL ) {
 		GL_State( GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA | GLS_DEPTHFUNC_EQUAL );
@@ -626,7 +778,10 @@ static void ComputeColors( shaderStage_t *pStage )
 			Com_Memset( tess.svars.colors, tr.identityLightByte, tess.numVertexes * 4 );
 			break;
 		case CGEN_LIGHTING_DIFFUSE:
-			RB_CalcDiffuseColor( ( unsigned char * ) tess.svars.colors );
+			RB_CalcDiffuseColor( ( unsigned char * ) tess.svars.colors, NULL );
+			break;
+		case CGEN_LIGHTING_DIFFUSE_ENTITY:
+			RB_CalcDiffuseColor( ( unsigned char * ) tess.svars.colors, backEnd.currentEntity->e.shaderRGBA );
 			break;
 		case CGEN_EXACT_VERTEX:
 			Com_Memcpy( tess.svars.colors, tess.vertexColors, tess.numVertexes * sizeof( tess.vertexColors[0] ) );
@@ -675,16 +830,37 @@ static void ComputeColors( shaderStage_t *pStage )
 		case CGEN_FOG:
 			{
 				fog_t		*fog;
+				unsigned	colorInt;
 
-				fog = tr.world->fogs + tess.fogNum;
+#if 0
+				if ( r_useGlFog->integer ) {
+					Com_Memset( tess.svars.colors, tr.identityLightByte, tess.numVertexes * 4 );
+					break;
+				}
+#endif
+
+				if ( tess.shader->isSky ) {
+					colorInt = tr.skyFogColorInt;
+				} else {
+					fog = tr.world->fogs + tess.fogNum;
+
+					if ( fog->originalBrushNumber < 0 ) {
+						colorInt = backEnd.refdef.fogColorInt;
+					} else {
+						colorInt = fog->colorInt;
+					}
+				}
 
 				for ( i = 0; i < tess.numVertexes; i++ ) {
-					* ( int * )&tess.svars.colors[i] = fog->colorInt;
+					* ( int * )&tess.svars.colors[i] = colorInt;
 				}
 			}
 			break;
 		case CGEN_WAVEFORM:
-			RB_CalcWaveColor( &pStage->rgbWave, ( unsigned char * ) tess.svars.colors );
+			RB_CalcWaveColor( &pStage->rgbWave, NULL, ( unsigned char * ) tess.svars.colors );
+			break;
+		case CGEN_COLOR_WAVEFORM:
+			RB_CalcWaveColor( &pStage->rgbWave, pStage->constantColor, ( unsigned char * ) tess.svars.colors );
 			break;
 		case CGEN_ENTITY:
 			RB_CalcColorFromEntity( ( unsigned char * ) tess.svars.colors );
@@ -774,12 +950,102 @@ static void ComputeColors( shaderStage_t *pStage )
 			}
 		}
 		break;
+	case AGEN_SKY_ALPHA:
+		{
+			unsigned char alpha = 0xff * backEnd.refdef.skyAlpha;
+
+			for ( i = 0; i < tess.numVertexes; i++ ) {
+				tess.svars.colors[i][3] = alpha;
+			}
+		}
+		break;
+	case AGEN_ONE_MINUS_SKY_ALPHA:
+		{
+			unsigned char alpha = 0xff * ( 1.0f - backEnd.refdef.skyAlpha );
+
+			for ( i = 0; i < tess.numVertexes; i++ ) {
+				tess.svars.colors[i][3] = alpha;
+			}
+		}
+		break;
+	case AGEN_NORMALZFADE:
+		{
+			float alpha, range, lowest, highest, dot;
+			vec3_t worldUp;
+			qboolean zombieEffect = qfalse;
+			vec3_t fireRiseDir = { 0, 0, 1 };
+
+			if ( !VectorCompare( backEnd.currentEntity->e.fireRiseDir, vec3_origin ) ) {
+				VectorCopy( backEnd.currentEntity->e.fireRiseDir, fireRiseDir );
+			}
+
+			if ( backEnd.currentEntity != &tr.worldEntity ) {    // world surfaces dont have an axis
+				VectorRotate( fireRiseDir, backEnd.currentEntity->e.axis, worldUp );
+			} else {
+				VectorCopy( fireRiseDir, worldUp );
+			}
+
+			lowest = pStage->zFadeBounds[0];
+			if ( lowest == -1000 ) {    // use entity alpha
+				lowest = backEnd.currentEntity->e.shaderTime;
+				zombieEffect = qtrue;
+			}
+			highest = pStage->zFadeBounds[1];
+			if ( highest == -1000 ) {   // use entity alpha
+				highest = backEnd.currentEntity->e.shaderTime;
+				zombieEffect = qtrue;
+			}
+			range = highest - lowest;
+			for ( i = 0; i < tess.numVertexes; i++ ) {
+				dot = DotProduct( tess.normal[i], worldUp );
+
+				// special handling for Zombie fade effect
+				if ( zombieEffect ) {
+					alpha = (float)backEnd.currentEntity->e.shaderRGBA[3] * ( dot + 1.0 ) / 2.0;
+					alpha += ( 2.0 * (float)backEnd.currentEntity->e.shaderRGBA[3] ) * ( 1.0 - ( dot + 1.0 ) / 2.0 );
+					if ( alpha > 255.0 ) {
+						alpha = 255.0;
+					} else if ( alpha < 0.0 ) {
+						alpha = 0.0;
+					}
+					tess.svars.colors[i][3] = (byte)( alpha );
+					continue;
+				}
+
+				if ( dot < highest ) {
+					if ( dot > lowest ) {
+						if ( dot < lowest + range / 2 ) {
+							alpha = ( (float)pStage->constantColor[3] * ( ( dot - lowest ) / ( range / 2 ) ) );
+						} else {
+							alpha = ( (float)pStage->constantColor[3] * ( 1.0 - ( ( dot - lowest - range / 2 ) / ( range / 2 ) ) ) );
+						}
+						if ( alpha > 255.0 ) {
+							alpha = 255.0;
+						} else if ( alpha < 0.0 ) {
+							alpha = 0.0;
+						}
+
+						// finally, scale according to the entity's alpha
+						if ( backEnd.currentEntity->e.hModel ) {
+							alpha *= (float)backEnd.currentEntity->e.shaderRGBA[3] / 255.0;
+						}
+
+						tess.svars.colors[i][3] = (byte)( alpha );
+					} else {
+						tess.svars.colors[i][3] = 0;
+					}
+				} else {
+					tess.svars.colors[i][3] = 0;
+				}
+			}
+		}
+		break;
 	}
 
 	//
 	// fog adjustment for colors to fade out as fog increases
 	//
-	if ( tess.fogNum )
+	if ( tess.fogNum && ( !tess.shader->noFog || pStage->isFogged ) )
 	{
 		switch ( pStage->adjustColorsForFog )
 		{
@@ -865,6 +1131,9 @@ static void ComputeTexCoords( shaderStage_t *pStage ) {
 		case TCGEN_ENVIRONMENT_MAPPED:
 			RB_CalcEnvironmentTexCoords( ( float * ) tess.svars.texcoords[b] );
 			break;
+		case TCGEN_ENVIRONMENT_CELSHADE_MAPPED:
+			RB_CalcEnvironmentCelShadeTexCoords( ( float * ) tess.svars.texcoords[b] );
+			break;
 		case TCGEN_BAD:
 			return;
 		}
@@ -923,11 +1192,36 @@ static void ComputeTexCoords( shaderStage_t *pStage ) {
 }
 
 /*
+==============
+SetIteratorFog
+
+Set the fog parameters for this pass.
+==============
+*/
+void SetIteratorFog( void ) {
+	if ( backEnd.refdef.rdflags & RDF_NOWORLDMODEL ) {
+		R_FogOff();
+		return;
+	}
+
+	if ( tess.fogNum && tess.shader->fogPass ) {
+		RB_Fog( tess.fogNum );
+	} else {
+		R_FogOff();
+	}
+}
+
+/*
 ** RB_IterateStagesGeneric
 */
 static void RB_IterateStagesGeneric( shaderCommands_t *input )
 {
 	int stage;
+	qboolean overridealpha = qfalse;
+	int oldAlphaGen = AGEN_IDENTITY;
+	int oldStateBits = 0;
+	qboolean overridecolor = qfalse;
+	int oldRgbGen = CGEN_IDENTITY;
 
 	for ( stage = 0; stage < MAX_SHADER_STAGES; stage++ )
 	{
@@ -938,6 +1232,37 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			break;
 		}
 
+		// override the shader alpha channel if requested
+		if ( backEnd.currentEntity && backEnd.currentEntity->e.renderfx & RF_FORCE_ENT_ALPHA )
+		{
+			overridealpha = qtrue;
+			oldAlphaGen = pStage->alphaGen;
+			oldStateBits = pStage->stateBits;
+			pStage->alphaGen = AGEN_ENTITY;
+
+			// set bits for blendfunc blend
+			pStage->stateBits = GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA;
+
+			// keep the original alphafunc, if any
+			pStage->stateBits |= ( oldStateBits & GLS_ATEST_BITS );
+		}
+		else
+		{
+			overridealpha = qfalse;
+		}
+
+		// override the shader color channels if requested
+		if ( backEnd.currentEntity && backEnd.currentEntity->e.renderfx & RF_RGB_TINT )
+		{
+			overridecolor = qtrue;
+			oldRgbGen = pStage->rgbGen;
+			pStage->rgbGen = CGEN_ENTITY;
+		}
+		else
+		{
+			overridecolor = qfalse;
+		}
+
 		ComputeColors( pStage );
 		ComputeTexCoords( pStage );
 
@@ -945,6 +1270,13 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 		{
 			qglEnableClientState( GL_COLOR_ARRAY );
 			qglColorPointer( 4, GL_UNSIGNED_BYTE, 0, input->svars.colors );
+		}
+
+		// per stage fogging (detail textures)
+		if ( !tess.shader->noFog || pStage->isFogged ) {
+			RB_FogOn();
+		} else {
+			R_FogOff();
 		}
 
 		//
@@ -966,13 +1298,30 @@ static void RB_IterateStagesGeneric( shaderCommands_t *input )
 			//
 			R_BindAnimatedImage( &pStage->bundle[0] );
 
-			GL_State( pStage->stateBits );
+			// Disable depth test for 2D drawing
+			if ( backEnd.currentEntity == &backEnd.entity2D ) {
+				GL_State( pStage->stateBits | GLS_DEPTHTEST_DISABLE );
+			} else {
+				GL_State( pStage->stateBits );
+			}
 
 			//
 			// draw
 			//
 			R_DrawElements( input->numIndexes, input->indexes );
 		}
+
+		if ( overridealpha )
+		{
+			pStage->alphaGen = oldAlphaGen;
+			pStage->stateBits = oldStateBits;
+		}
+
+		if ( overridecolor )
+		{
+			pStage->rgbGen = oldRgbGen;
+		}
+
 		// allow skipping out to show just lightmaps during development
 		if ( r_lightmap->integer && ( pStage->bundle[0].isLightmap || pStage->bundle[1].isLightmap ) )
 		{
@@ -1006,6 +1355,11 @@ void RB_StageIteratorGeneric( void )
 	}
 
 	//
+	// set GL fog
+	//
+	SetIteratorFog();
+
+	//
 	// set face culling appropriately
 	//
 	GL_Cull( shader->cullType );
@@ -1023,7 +1377,7 @@ void RB_StageIteratorGeneric( void )
 	// to avoid compiling those arrays since they will change
 	// during multipass rendering
 	//
-	if ( tess.numPasses > 1 || shader->multitextureEnv )
+	if ( tess.numPasses > 1 || ( tess.xstages[0] && tess.xstages[0]->multitextureEnv ) )
 	{
 		setArraysOnce = qfalse;
 		qglDisableClientState (GL_COLOR_ARRAY);
@@ -1068,7 +1422,7 @@ void RB_StageIteratorGeneric( void )
 	// now do any dynamic lighting needed
 	//
 	if ( tess.dlightBits && tess.shader->sort <= SS_OPAQUE
-		&& !(tess.shader->surfaceFlags & (SURF_NODLIGHT | SURF_SKY) ) ) {
+		&& !(tess.shader->surfaceParms & (SURF_NODLIGHT | SURF_SKY) ) ) {
 		ProjectDlightTexture();
 	}
 
@@ -1112,7 +1466,7 @@ void RB_StageIteratorVertexLitTexture( void )
 	//
 	// compute colors
 	//
-	RB_CalcDiffuseColor( ( unsigned char * ) tess.svars.colors );
+	RB_CalcDiffuseColor( ( unsigned char * ) tess.svars.colors, NULL );
 
 	//
 	// log this call
@@ -1123,6 +1477,11 @@ void RB_StageIteratorVertexLitTexture( void )
 		// a call to va() every frame!
 		GLimp_LogComment( va("--- RB_StageIteratorVertexLitTexturedUnfogged( %s ) ---\n", tess.shader->name) );
 	}
+
+	//
+	// set GL fog
+	//
+	SetIteratorFog();
 
 	//
 	// set face culling appropriately
@@ -1193,6 +1552,11 @@ void RB_StageIteratorLightmappedMultitexture( void ) {
 		// a call to va() every frame!
 		GLimp_LogComment( va("--- RB_StageIteratorLightmappedMultitexture( %s ) ---\n", tess.shader->name) );
 	}
+
+	//
+	// set GL fog
+	//
+	SetIteratorFog();
 
 	//
 	// set face culling appropriately

@@ -1,48 +1,41 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 //
 // q_shared.c -- stateless support routines that are included in each code dll
 #include "q_shared.h"
 
-// ^[0-9a-zA-Z]
-qboolean Q_IsColorString(const char *p) {
-	if (!p)
-		return qfalse;
-
-	if (p[0] != Q_COLOR_ESCAPE)
-		return qfalse;
-
-	if (p[1] == 0)
-		return qfalse;
-
-	// isalnum expects a signed integer in the range -1 (EOF) to 255, or it might assert on undefined behaviour
-	// a dereferenced char pointer has the range -128 to 127, so we just need to rangecheck the negative part
-	if (p[1] < 0)
-		return qfalse;
-
-	if (isalnum(p[1]) == 0)
-		return qfalse;
-
-	return qtrue;
+void Com_Memcpy2( void *dst, int dstSize, const void *src, int srcSize ) {
+	Com_Memcpy( dst, src, MIN( dstSize, srcSize ) );
+	if ( dstSize > srcSize ) {
+		Com_Memset( (byte*)dst+srcSize, 0, dstSize-srcSize );
+	}
 }
 
 float Com_Clamp( float min, float max, float value ) {
@@ -151,13 +144,25 @@ void COM_DefaultExtension( char *path, int maxSize, const char *extension )
 }
 
 /*
+==================
+COM_SetExtension
+==================
+*/
+void COM_SetExtension(char *path, int maxSize, const char *extension)
+{
+	COM_StripExtension(path, path, maxSize);
+
+	Q_strcat(path, maxSize, extension);
+}
+
+/*
 ============================================================================
 
 					BYTE ORDER FUNCTIONS
 
 ============================================================================
 */
-/*
+#ifdef Q3_PORTABLE_ENDIAN
 // can't just use function pointers, or dll linkage can
 // mess up when qcommon is included in multiple places
 static short	(*_BigShort) (short l);
@@ -175,9 +180,9 @@ int		BigLong (int l) {return _BigLong(l);}
 int		LittleLong (int l) {return _LittleLong(l);}
 qint64 	BigLong64 (qint64 l) {return _BigLong64(l);}
 qint64 	LittleLong64 (qint64 l) {return _LittleLong64(l);}
-float	BigFloat (const float *l) {return _BigFloat(l);}
-float	LittleFloat (const float *l) {return _LittleFloat(l);}
-*/
+float	BigFloatPtr (const float *l) {return _BigFloat(l);}
+float	LittleFloatPtr (const float *l) {return _LittleFloat(l);}
+#endif
 
 void CopyShortSwap(void *dest, void *src)
 {
@@ -264,18 +269,18 @@ float FloatNoSwap (const float *f)
 	return *f;
 }
 
+#ifdef Q3_PORTABLE_ENDIAN
 /*
 ================
 Swap_Init
 ================
 */
-/*
 void Swap_Init (void)
 {
 	byte	swaptest[2] = {1,0};
 
-// set the byte swapping variables in a portable manner	
-	if ( *(short *)swaptest == 1)
+	// set the byte swapping variables in a portable manner
+	if ( *(short *)swaptest == 1 )
 	{
 		_BigShort = ShortSwap;
 		_LittleShort = ShortNoSwap;
@@ -297,9 +302,8 @@ void Swap_Init (void)
 		_BigFloat = FloatNoSwap;
 		_LittleFloat = FloatSwap;
 	}
-
 }
-*/
+#endif
 
 /*
 ============================================================================
@@ -333,7 +337,12 @@ int COM_GetCurrentParseLine( void )
 
 char *COM_Parse( char **data_p )
 {
-	return COM_ParseExt( data_p, qtrue );
+	return COM_ParseExt2(data_p, qtrue, 0);
+}
+
+char *COM_ParseExt( char **data_p, qboolean allowLineBreaks )
+{
+	return COM_ParseExt2(data_p, allowLineBreaks, 0);
 }
 
 void COM_ParseError( char *format, ... )
@@ -372,7 +381,7 @@ string will be returned if the next token is
 a newline.
 ==============
 */
-static char *SkipWhitespace( char *data, qboolean *hasNewLines ) {
+static char *SkipWhitespace( char *data, int *linesSkipped ) {
 	int c;
 
 	while( (c = *data) <= ' ') {
@@ -380,8 +389,7 @@ static char *SkipWhitespace( char *data, qboolean *hasNewLines ) {
 			return NULL;
 		}
 		if( c == '\n' ) {
-			com_lines++;
-			*hasNewLines = qtrue;
+			*linesSkipped += 1;
 		}
 		data++;
 	}
@@ -458,10 +466,10 @@ int COM_Compress( char *data_p ) {
 	return out - data_p;
 }
 
-char *COM_ParseExt( char **data_p, qboolean allowLineBreaks )
+char *COM_ParseExt2( char **data_p, qboolean allowLineBreaks, char delimiter )
 {
 	int c = 0, len;
-	qboolean hasNewLines = qfalse;
+	int linesSkipped = 0;
 	char *data;
 
 	data = *data_p;
@@ -479,17 +487,20 @@ char *COM_ParseExt( char **data_p, qboolean allowLineBreaks )
 	while ( 1 )
 	{
 		// skip whitespace
-		data = SkipWhitespace( data, &hasNewLines );
+		data = SkipWhitespace( data, &linesSkipped );
 		if ( !data )
 		{
 			*data_p = NULL;
 			return com_token;
 		}
-		if ( hasNewLines && !allowLineBreaks )
+		if ( data && linesSkipped && !allowLineBreaks )
 		{
-			*data_p = data;
+			// ZTM: Don't move the pointer so that calling SkipRestOfLine afterwards works as expected
+			//*data_p = data;
 			return com_token;
 		}
+
+		com_lines += linesSkipped;
 
 		c = *data;
 
@@ -562,7 +573,7 @@ char *COM_ParseExt( char **data_p, qboolean allowLineBreaks )
 		}
 		data++;
 		c = *data;
-	} while (c>32);
+	} while (c>32 && c != delimiter);
 
 	com_token[len] = 0;
 
@@ -627,6 +638,25 @@ void SkipRestOfLine ( char **data ) {
 		return;
 
 	while ( (c = *p++) != 0 ) {
+		if ( c == '\n' ) {
+			com_lines++;
+			break;
+		}
+	}
+
+	*data = p;
+}
+
+void SkipRestOfLineUntilBrace ( char **data ) {
+	char	*p;
+	int		c;
+
+	p = *data;
+	while ( (c = *p++) != 0 ) {
+		if ( c == '{' || c == '}' ) {
+			p--;
+			break;
+		}
 		if ( c == '\n' ) {
 			com_lines++;
 			break;
@@ -1460,3 +1490,180 @@ char *Com_SkipTokens( char *s, int numTokens, char *sep )
 	else
 		return s;
 }
+
+/*
+============
+Com_ClientListContains
+============
+*/
+qboolean Com_ClientListContains( const clientList_t *list, int clientNum )
+{
+	if( clientNum < 0 || clientNum >= MAX_CLIENTS || !list )
+		return qfalse;
+	if( clientNum < 32 )
+		return ( ( list->lo & ( 1 << clientNum ) ) != 0 );
+	else
+		return ( ( list->hi & ( 1 << ( clientNum - 32 ) ) ) != 0 );
+}
+
+/*
+============
+Com_ClientListAdd
+============
+*/
+void Com_ClientListAdd( clientList_t *list, int clientNum )
+{
+	if( clientNum < 0 || clientNum >= MAX_CLIENTS || !list )
+		return;
+	if( clientNum < 32 )
+		list->lo |= ( 1 << clientNum );
+	else
+		list->hi |= ( 1 << ( clientNum - 32 ) );
+}
+
+/*
+============
+Com_ClientListRemove
+============
+*/
+void Com_ClientListRemove( clientList_t *list, int clientNum )
+{
+	if( clientNum < 0 || clientNum >= MAX_CLIENTS || !list )
+		return;
+	if( clientNum < 32 )
+		list->lo &= ~( 1 << clientNum );
+	else
+		list->hi &= ~( 1 << ( clientNum - 32 ) );
+}
+
+/*
+============
+Com_ClientListClear
+============
+*/
+void Com_ClientListClear( clientList_t *list ) {
+	if ( !list )
+		return;
+
+	list->lo = list->hi = 0u;
+}
+
+/*
+============
+Com_ClientListAll
+============
+*/
+void Com_ClientListAll( clientList_t *list ) {
+	if ( !list )
+		return;
+
+	list->lo = list->hi = ~0u;
+}
+
+/*
+============
+Com_ClientListString
+============
+*/
+char *Com_ClientListString( const clientList_t *list )
+{
+	static char s[ 17 ];
+
+	s[ 0 ] = '\0';
+	if( !list )
+		return s;
+	Com_sprintf( s, sizeof( s ), "%08x%08x", list->hi, list->lo );
+	return s;
+}
+
+/*
+============
+Com_ClientListParse
+============
+*/
+void Com_ClientListParse( clientList_t *list, const char *s )
+{
+	if( !list )
+		return;
+	list->lo = 0;
+	list->hi = 0;
+	if( !s )
+		return;
+	if( strlen( s ) != 16 )
+		return;
+	sscanf( s, "%08x%08x", &list->hi, &list->lo );
+}
+
+/*
+=================
+Com_LocalPlayerCvarName
+=================
+*/
+char *Com_LocalPlayerCvarName(int localPlayerNum, const char *in_cvarName) {
+	static char localPlayerCvarName[MAX_CVAR_VALUE_STRING];
+
+	if (localPlayerNum == 0) {
+		Q_strncpyz(localPlayerCvarName, in_cvarName, MAX_CVAR_VALUE_STRING);
+	} else {
+		char prefix[2];
+		const char *cvarName;
+
+		prefix[1] = '\0';
+
+		cvarName = in_cvarName;
+
+		if (cvarName[0] == '+' || cvarName[0] == '-') {
+			prefix[0] = cvarName[0];
+			cvarName++;
+		} else {
+			prefix[0] = '\0';
+		}
+
+		Com_sprintf(localPlayerCvarName, MAX_CVAR_VALUE_STRING, "%s%d%s", prefix, localPlayerNum+1, cvarName);
+	}
+
+	return localPlayerCvarName;
+}
+
+/*
+=================
+Com_LocalPlayerForCvarName
+=================
+*/
+int Com_LocalPlayerForCvarName(const char *in_cvarName) {
+	const char *p = in_cvarName;
+	
+	if (p && (*p == '-' || *p == '+')) {
+		p++;
+	}
+
+	if (p && *p && *p >= '2' && *p < '2'+MAX_SPLITVIEW-1) {
+		return *p-'1';
+	}
+
+	return 0;
+}
+
+/*
+=================
+Com_LocalPlayerBaseCvarName
+=================
+*/
+const char *Com_LocalPlayerBaseCvarName(const char *in_cvarName) {
+	static char baseName[MAX_CVAR_VALUE_STRING];
+	int localPlayerNum;
+
+	localPlayerNum = Com_LocalPlayerForCvarName( in_cvarName );
+
+	if ( localPlayerNum == 0 ) {
+		Q_strncpyz( baseName, in_cvarName, sizeof ( baseName ) );
+	} else if ( in_cvarName[0] == '+' || in_cvarName[0] == '-' ) {
+		baseName[0] = in_cvarName[0];
+		Q_strncpyz( baseName + 1, in_cvarName + 2, sizeof ( baseName ) - 1 );
+	} else {
+		Q_strncpyz( baseName, in_cvarName + 1, sizeof ( baseName ) );
+	}
+
+	return baseName;
+}
+

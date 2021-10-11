@@ -1,22 +1,30 @@
 /*
 ===========================================================================
-Copyright (C) 1999-2005 Id Software, Inc.
+Copyright (C) 1999-2010 id Software LLC, a ZeniMax Media company.
 
-This file is part of Quake III Arena source code.
+This file is part of Spearmint Source Code.
 
-Quake III Arena source code is free software; you can redistribute it
+Spearmint Source Code is free software; you can redistribute it
 and/or modify it under the terms of the GNU General Public License as
-published by the Free Software Foundation; either version 2 of the License,
+published by the Free Software Foundation; either version 3 of the License,
 or (at your option) any later version.
 
-Quake III Arena source code is distributed in the hope that it will be
+Spearmint Source Code is distributed in the hope that it will be
 useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Quake III Arena source code; if not, write to the Free Software
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+along with Spearmint Source Code.  If not, see <http://www.gnu.org/licenses/>.
+
+In addition, Spearmint Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License.  If not, please
+request a copy in writing from id Software at the address below.
+
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc.,
+Suite 120, Rockville, Maryland 20850 USA.
 ===========================================================================
 */
 //
@@ -34,9 +42,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 //#define SCREWUP
 //#define BOTLIB
-//#define QUAKE
-//#define QUAKEC
-//#define MEQCC
 
 #ifdef SCREWUP
 #include <stdio.h>
@@ -54,6 +59,7 @@ typedef enum {qfalse, qtrue}	qboolean;
 
 #ifdef BOTLIB
 #include "../qcommon/q_shared.h"
+#include "../qcommon/qcommon.h"
 #include "botlib.h"
 #include "be_interface.h"
 #include "l_memory.h"
@@ -62,35 +68,13 @@ typedef enum {qfalse, qtrue}	qboolean;
 #include "l_log.h"
 #endif //BOTLIB
 
-#ifdef MEQCC
-#include "qcc.h"
-#include "time.h"   //time & ctime
-#include "math.h"   //fabs
-#include "l_memory.h"
-#include "l_script.h"
-#include "l_precomp.h"
-#include "l_log.h"
-
-#define qtrue	true
-#define qfalse	false
-#endif //MEQCC
-
 #ifdef BSPC
 //include files for usage in the BSP Converter
 #include "../bspc/qbsp.h"
 #include "../bspc/l_log.h"
 #include "../bspc/l_mem.h"
 #include "l_precomp.h"
-
-#define qtrue	true
-#define qfalse	false
-#define Q_stricmp	stricmp
-
 #endif //BSPC
-
-#if defined(QUAKE) && !defined(BSPC)
-#include "l_utils.h"
-#endif //QUAKE
 
 //#define DEBUG_EVAL
 
@@ -117,7 +101,7 @@ token_t *freetokens;					//free tokens from the heap
 */
 
 //list with global defines added to every source loaded
-define_t *globaldefines;
+define_t *globaldefines_implicit;
 
 //============================================================================
 //
@@ -134,11 +118,8 @@ void QDECL SourceError(source_t *source, char *str, ...)
 	Q_vsnprintf(text, sizeof(text), str, ap);
 	va_end(ap);
 #ifdef BOTLIB
-	botimport.Print(PRT_ERROR, "file %s, line %d: %s\n", source->scriptstack->filename, source->scriptstack->line, text);
+	Com_Printf(S_COLOR_RED "Error: file %s, line %d: %s\n", source->scriptstack->filename, source->scriptstack->line, text);
 #endif	//BOTLIB
-#ifdef MEQCC
-	printf("error: file %s, line %d: %s\n", source->scriptstack->filename, source->scriptstack->line, text);
-#endif //MEQCC
 #ifdef BSPC
 	Log_Print("error: file %s, line %d: %s\n", source->scriptstack->filename, source->scriptstack->line, text);
 #endif //BSPC
@@ -158,11 +139,8 @@ void QDECL SourceWarning(source_t *source, char *str, ...)
 	Q_vsnprintf(text, sizeof(text), str, ap);
 	va_end(ap);
 #ifdef BOTLIB
-	botimport.Print(PRT_WARNING, "file %s, line %d: %s\n", source->scriptstack->filename, source->scriptstack->line, text);
+	Com_Printf(S_COLOR_YELLOW "Warning: file %s, line %d: %s\n", source->scriptstack->filename, source->scriptstack->line, text);
 #endif //BOTLIB
-#ifdef MEQCC
-	printf("warning: file %s, line %d: %s\n", source->scriptstack->filename, source->scriptstack->line, text);
-#endif //MEQCC
 #ifdef BSPC
 	Log_Print("warning: file %s, line %d: %s\n", source->scriptstack->filename, source->scriptstack->line, text);
 #endif //BSPC
@@ -517,6 +495,7 @@ void PC_PrintDefine(define_t *define)
 //	struct define_s *next;			//next defined macro in a list
 } //end of the function PC_PrintDefine*/
 #if DEFINEHASHING
+#if 0
 //============================================================================
 //
 // Parameter:				-
@@ -538,6 +517,7 @@ void PC_PrintDefineHashTable(define_t **definehash)
 		Log_Write("\n");
 	} //end for
 } //end of the function PC_PrintDefineHashTable
+#endif
 //============================================================================
 //
 // Parameter:				-
@@ -972,9 +952,6 @@ int PC_Directive_include(source_t *source)
 	script_t *script;
 	token_t token;
 	char path[MAX_QPATH];
-#ifdef QUAKE
-	foundfile_t file;
-#endif //QUAKE
 
 	if (source->skip > 0) return qtrue;
 	//
@@ -1030,14 +1007,6 @@ int PC_Directive_include(source_t *source)
 		SourceError(source, "#include without file name");
 		return qfalse;
 	} //end else
-#ifdef QUAKE
-	if (!script)
-	{
-		Com_Memset(&file, 0, sizeof(foundfile_t));
-		script = LoadScriptFile(path);
-		if (script) Q_strncpyz(script->filename, path, sizeof(script->filename));
-	} //end if
-#endif //QUAKE
 	if (!script)
 	{
 #ifdef SCREWUP
@@ -1310,7 +1279,7 @@ int PC_Directive_define(source_t *source)
 // Returns:					-
 // Changes Globals:		-
 //============================================================================
-define_t *PC_DefineFromString(char *string)
+define_t *PC_DefineFromString(const char *string)
 {
 	script_t *script;
 	source_t src;
@@ -1368,7 +1337,7 @@ define_t *PC_DefineFromString(char *string)
 // Returns:					-
 // Changes Globals:		-
 //============================================================================
-int PC_AddDefine(source_t *source, char *string)
+int PC_AddDefine(source_t *source, const char *string)
 {
 	define_t *define;
 
@@ -1389,14 +1358,17 @@ int PC_AddDefine(source_t *source, char *string)
 // Returns:					-
 // Changes Globals:		-
 //============================================================================
-int PC_AddGlobalDefine(char *string)
+int PC_AddGlobalDefine(define_t **globaldefines, const char *string)
 {
 	define_t *define;
 
+	if ( !globaldefines )
+		globaldefines = &globaldefines_implicit;
+
 	define = PC_DefineFromString(string);
 	if (!define) return qfalse;
-	define->next = globaldefines;
-	globaldefines = define;
+	define->next = *globaldefines;
+	*globaldefines = define;
 	return qtrue;
 } //end of the function PC_AddGlobalDefine
 //============================================================================
@@ -1406,16 +1378,28 @@ int PC_AddGlobalDefine(char *string)
 // Returns:					-
 // Changes Globals:		-
 //============================================================================
-int PC_RemoveGlobalDefine(char *name)
+int PC_RemoveGlobalDefine(define_t **globaldefines, const char *name)
 {
-	define_t *define;
+	define_t *define, *previous, *next;
 
-	define = PC_FindDefine(globaldefines, name);
-	if (define)
+	if ( !globaldefines )
+		globaldefines = &globaldefines_implicit;
+
+	previous = NULL;
+	for (define = *globaldefines; define; define = next)
 	{
-		PC_FreeDefine(define);
-		return qtrue;
-	} //end if
+		next = define->next;
+		if (!strcmp(define->name, name)) {
+			if (previous) {
+				previous->next = next;
+			} else {
+				*globaldefines = next;
+			}
+			PC_FreeDefine(define);
+			return qtrue;
+		}
+		previous = define;
+	} //end for
 	return qfalse;
 } //end of the function PC_RemoveGlobalDefine
 //============================================================================
@@ -1425,15 +1409,19 @@ int PC_RemoveGlobalDefine(char *name)
 // Returns:					-
 // Changes Globals:		-
 //============================================================================
-void PC_RemoveAllGlobalDefines(void)
+void PC_RemoveAllGlobalDefines(define_t **globaldefines)
 {
 	define_t *define;
 
-	for (define = globaldefines; define; define = globaldefines)
+	if ( !globaldefines )
+		globaldefines = &globaldefines_implicit;
+
+	for (define = *globaldefines; define; define = *globaldefines)
 	{
-		globaldefines = globaldefines->next;
+		*globaldefines = (*globaldefines)->next;
 		PC_FreeDefine(define);
 	} //end for
+	*globaldefines = NULL;
 } //end of the function PC_RemoveAllGlobalDefines
 //============================================================================
 //
@@ -1441,7 +1429,7 @@ void PC_RemoveAllGlobalDefines(void)
 // Returns:					-
 // Changes Globals:		-
 //============================================================================
-define_t *PC_CopyDefine(source_t *source, define_t *define)
+define_t *PC_CopyDefine(source_t *source, const define_t *define)
 {
 	define_t *newdefine;
 	token_t *token, *newtoken, *lasttoken;
@@ -1484,9 +1472,13 @@ define_t *PC_CopyDefine(source_t *source, define_t *define)
 // Returns:					-
 // Changes Globals:		-
 //============================================================================
-void PC_AddGlobalDefinesToSource(source_t *source)
+void PC_AddGlobalDefinesToSource(source_t *source, const define_t *globaldefines)
 {
-	define_t *define, *newdefine;
+	const define_t *define;
+	define_t *newdefine;
+
+	if (!globaldefines)
+		globaldefines = globaldefines_implicit;
 
 	for (define = globaldefines; define; define = define->next)
 	{
@@ -2643,60 +2635,6 @@ int PC_ReadDollarDirective(source_t *source)
 	SourceError(source, "unknown precompiler directive %s", token.string);
 	return qfalse;
 } //end of the function PC_ReadDirective
-
-#ifdef QUAKEC
-//============================================================================
-//
-// Parameter:				-
-// Returns:					-
-// Changes Globals:		-
-//============================================================================
-int BuiltinFunction(source_t *source)
-{
-	token_t token;
-
-	if (!PC_ReadSourceToken(source, &token)) return qfalse;
-	if (token.type == TT_NUMBER)
-	{
-		PC_UnreadSourceToken(source, &token);
-		return qtrue;
-	} //end if
-	else
-	{
-		PC_UnreadSourceToken(source, &token);
-		return qfalse;
-	} //end else
-} //end of the function BuiltinFunction
-//============================================================================
-//
-// Parameter:				-
-// Returns:					-
-// Changes Globals:		-
-//============================================================================
-int QuakeCMacro(source_t *source)
-{
-	int i;
-	token_t token;
-
-	if (!PC_ReadSourceToken(source, &token)) return qtrue;
-	if (token.type != TT_NAME)
-	{
-		PC_UnreadSourceToken(source, &token);
-		return qtrue;
-	} //end if
-	//find the precompiler directive
-	for (i = 0; dollardirectives[i].name; i++)
-	{
-		if (!strcmp(dollardirectives[i].name, token.string))
-		{
-			PC_UnreadSourceToken(source, &token);
-			return qfalse;
-		} //end if
-	} //end for
-	PC_UnreadSourceToken(source, &token);
-	return qtrue;
-} //end of the function QuakeCMacro
-#endif //QUAKEC
 //============================================================================
 //
 // Parameter:				-
@@ -2713,25 +2651,21 @@ int PC_ReadToken(source_t *source, token_t *token)
 		//check for precompiler directives
 		if (token->type == TT_PUNCTUATION && *token->string == '#')
 		{
-#ifdef QUAKEC
-			if (!BuiltinFunction(source))
-#endif //QUAKC
+			//read the precompiler directive
+			if (!PC_ReadDirective(source))
 			{
-				//read the precompiler directive
-				if (!PC_ReadDirective(source)) return qfalse;
-				continue;
+				return qfalse;
 			} //end if
+			continue;
 		} //end if
 		if (token->type == TT_PUNCTUATION && *token->string == '$')
 		{
-#ifdef QUAKEC
-			if (!QuakeCMacro(source))
-#endif //QUAKEC
+			//read the precompiler directive
+			if (!PC_ReadDollarDirective(source))
 			{
-				//read the precompiler directive
-				if (!PC_ReadDollarDirective(source)) return qfalse;
-				continue;
+				return qfalse;
 			} //end if
+			continue;
 		} //end if
 		// recursively concatenate strings that are behind each other still resolving defines
 		if (token->type == TT_STRING)
@@ -2986,7 +2920,7 @@ void PC_SetPunctuations(source_t *source, punctuation_t *p)
 // Returns:				-
 // Changes Globals:		-
 //============================================================================
-source_t *LoadSourceFile(const char *filename)
+source_t *LoadSourceFile(const char *filename, const define_t *globaldefines)
 {
 	source_t *source;
 	script_t *script;
@@ -3011,7 +2945,7 @@ source_t *LoadSourceFile(const char *filename)
 #if DEFINEHASHING
 	source->definehash = GetClearedMemory(DEFINEHASHSIZE * sizeof(define_t *));
 #endif //DEFINEHASHING
-	PC_AddGlobalDefinesToSource(source);
+	PC_AddGlobalDefinesToSource(source, globaldefines);
 	return source;
 } //end of the function LoadSourceFile
 //============================================================================
@@ -3020,7 +2954,7 @@ source_t *LoadSourceFile(const char *filename)
 // Returns:					-
 // Changes Globals:		-
 //============================================================================
-source_t *LoadSourceMemory(char *ptr, int length, char *name)
+source_t *LoadSourceMemory(const char *ptr, int length, const char *name, const define_t *globaldefines)
 {
 	source_t *source;
 	script_t *script;
@@ -3044,7 +2978,7 @@ source_t *LoadSourceMemory(char *ptr, int length, char *name)
 #if DEFINEHASHING
 	source->definehash = GetClearedMemory(DEFINEHASHSIZE * sizeof(define_t *));
 #endif //DEFINEHASHING
-	PC_AddGlobalDefinesToSource(source);
+	PC_AddGlobalDefinesToSource(source, globaldefines);
 	return source;
 } //end of the function LoadSourceMemory
 //============================================================================
@@ -3120,7 +3054,7 @@ void FreeSource(source_t *source)
 
 source_t *sourceFiles[MAX_SOURCEFILES];
 
-int PC_LoadSourceHandle(const char *filename)
+int PC_LoadSourceHandle(const char *filename, const char *basepath, const define_t *globaldefines)
 {
 	source_t *source;
 	int i;
@@ -3132,8 +3066,8 @@ int PC_LoadSourceHandle(const char *filename)
 	} //end for
 	if (i >= MAX_SOURCEFILES)
 		return 0;
-	PS_SetBaseFolder("");
-	source = LoadSourceFile(filename);
+	PS_SetBaseFolder(basepath);
+	source = LoadSourceFile(filename, globaldefines);
 	if (!source)
 		return 0;
 	sourceFiles[i] = source;
@@ -3162,6 +3096,21 @@ int PC_FreeSourceHandle(int handle)
 // Returns:				-
 // Changes Globals:		-
 //============================================================================
+int PC_AddDefineHandle(int handle, const char *define)
+{
+	if (handle < 1 || handle >= MAX_SOURCEFILES)
+		return qfalse;
+	if (!sourceFiles[handle])
+		return qfalse;
+
+	return PC_AddDefine(sourceFiles[handle], define);
+} //end of the function PC_FreeSourceHandle
+//============================================================================
+//
+// Parameter:			-
+// Returns:				-
+// Changes Globals:		-
+//============================================================================
 int PC_ReadTokenHandle(int handle, pc_token_t *pc_token)
 {
 	token_t token;
@@ -3180,8 +3129,26 @@ int PC_ReadTokenHandle(int handle, pc_token_t *pc_token)
 	pc_token->floatvalue = token.floatvalue;
 	if (pc_token->type == TT_STRING)
 		StripDoubleQuotes(pc_token->string);
+	if (pc_token->type == TT_LITERAL)
+		StripSingleQuotes(pc_token->string);
 	return ret;
 } //end of the function PC_ReadTokenHandle
+//============================================================================
+//
+// Parameter:				-
+// Returns:					-
+// Changes Globals:		-
+//============================================================================
+void PC_UnreadLastTokenHandle( int handle ) {
+	if ( handle < 1 || handle >= MAX_SOURCEFILES ) {
+		return;
+	}
+	if ( !sourceFiles[handle] ) {
+		return;
+	}
+
+	PC_UnreadSourceToken( sourceFiles[handle], &sourceFiles[handle]->token );
+} //end of the function PC_UnreadLastTokenHandle
 //============================================================================
 //
 // Parameter:			-
@@ -3208,7 +3175,7 @@ int PC_SourceFileAndLine(int handle, char *filename, int *line)
 // Returns:				-
 // Changes Globals:		-
 //============================================================================
-void PC_SetBaseFolder(char *path)
+void PC_SetBaseFolder(const char *path)
 {
 	PS_SetBaseFolder(path);
 } //end of the function PC_SetBaseFolder
@@ -3227,7 +3194,7 @@ void PC_CheckOpenSourceHandles(void)
 		if (sourceFiles[i])
 		{
 #ifdef BOTLIB
-			botimport.Print(PRT_ERROR, "file %s still open in precompiler\n", sourceFiles[i]->scriptstack->filename);
+			Com_Printf(S_COLOR_RED "Error: file %s still open in precompiler\n", sourceFiles[i]->scriptstack->filename);
 #endif	//BOTLIB
 		} //end if
 	} //end for
