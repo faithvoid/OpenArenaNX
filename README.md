@@ -1,6 +1,9 @@
 ## **OpenArenaNX-Spearmint - Experimental Splitscreen Build**
 A port of ioquake3 + OpenArena for the Nintendo Switch. Compatible with both controllers and keyboard + mouse controls! Based off of ioquake3 1.36 and OpenArena 3.00a. Also includes a q3a branch for playing regular Quake III Arena.
 
+### ***"Why? Doesn't ioquake3-nx already exist?"***
+It does, and this project uses some of it's code! But the releases requires a copy of baseq3 (which is non-free) to launch, so this fork tweaks a few variables to launch OpenArena (a free clone) as a standalone game. Also includes engine improvements from Spearmint for 2-4 player local splitscreen, improving it's enjoyability as a Switch title.
+
 ## **Installation (DOES NOT WORK YET, NO SUCCESSFUL BUILDS EXIST AS OF THIS MESSAGE!)**
 - Latest full build including game files can be downloaded and copied from <a href="https://accela.design/downloads/switch-homebrew/OpenArenaNX-Spearmint.zip">here!<br/></a>
 - Copy release files to /switch/ folder
@@ -10,8 +13,23 @@ A port of ioquake3 + OpenArena for the Nintendo Switch. Compatible with both con
 
 ## **Bugs** (N/A)
 
-## ***"Why? Doesn't ioquake3-nx already exist?"***
-It does, and this project uses some of it's code! But the releases requires a copy of baseq3 (which is non-free) to launch, so this fork tweaks a few variables to launch OpenArena (a free clone) as a standalone game. Also includes engine improvements from Spearmint for 2-4 player local splitscreen, improving it's enjoyability as a Switch title.
+## **Controls**
+- Left Trigger - Jump
+- Right Trigger - Attack
+- Left Bumper - Crouch (or brings up keyboard when text fields are selected)
+- Right Bumper - Next Weapon
+- X - Use
+- Y - Taunt / Toggle Console (menu)
+- A - Select
+- D-Pad Left + Right - Weapon Select
+- D-Pad Up - Zoom
+- D-Pad Down - Toggle Console (in-game)
+- Minus - Scores
+- Plus - Menu
+- Left Stick In - Vote No
+- Right Stick In - Vote Yes
+
+
 
 ## **TODO**
 - Compile a successful build.
