@@ -30,11 +30,11 @@ include $(DEVKITPRO)/libnx/switch_rules
 #     - icon.jpg
 #     - <libnx folder>/default_icon.jpg
 #---------------------------------------------------------------------------------
-APP_TITLE	:=	OpenArenaNX
+APP_TITLE	:=	Q3ArenaNX
 APP_AUTHOR	:=	faithvoid
 APP_VERSION	:=	0.7.5
 
-TARGET		:=	OpenArenaNX
+TARGET		:=	Q3ArenaNX
 BUILD		:=	build
 SOURCES		:=
 
@@ -291,10 +291,10 @@ define DO_REF_STR
 @echo ";" >> $(TOPDIR)/$@
 endef
 
-VERSION		:=	1.36+3.00a
+VERSION		:=	1.36
 DATA		:=	data
 INCLUDES	:=
-DEFINES		+=	-DOPENARENA -DSTANDALONE -DDEFAULT_BASEDIR=\"baseoa\" -DUSE_CURL -DUSE_CODEC_VORBIS -DUSE_CODEC_MP3 -DPRODUCT_VERSION=\"$(VERSION)\" -DARCH_STRING=\"aarch64\" \
+DEFINES		+=	-DUSE_CURL -DUSE_CODEC_VORBIS -DUSE_CODEC_MP3 -DPRODUCT_VERSION=\"$(VERSION)\" -DARCH_STRING=\"aarch64\" \
 				-DBOTLIB -DNO_VM_COMPILED -DUSE_OPENAL
 EXEFS_SRC	:=	exefs_src
 #ROMFS	:=	romfs
