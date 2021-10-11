@@ -24,6 +24,7 @@ Otherwise, the game works as you'd expect, and supports most, if not all mods th
 - Left Trigger - Jump
 - Right Trigger - Attack
 - Left Bumper - Crouch (or brings up keyboard when text fields are selected)
+- Right Bumper - Next Weapon
 - X - Use
 - Y - Taunt / Toggle Console (menu)
 - A - Select
