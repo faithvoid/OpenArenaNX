@@ -3,6 +3,8 @@ A port of ioquake3 + OpenArena for the Nintendo Switch. Compatible with both con
 
 ![20211009_100312](https://user-images.githubusercontent.com/56975081/136676741-83c50a67-0df4-4e8f-b294-ba6eb94c709f.jpg)
 
+### **"Why? Doesn't ioquake3-nx already exist?"**
+It does, and this project uses some of it's code! But the releases requires a copy of baseq3 (which is non-free) to launch, so this fork tweaks a few variables to launch OpenArena (a free clone) as a standalone game.
 
 ## **Installation**
 - Latest full build including game files can be downloaded and copied from <a href="https://accela.design/downloads/switch-homebrew/OpenArenaNX.zip">here!<br/></a>
@@ -18,12 +20,23 @@ A port of ioquake3 + OpenArena for the Nintendo Switch. Compatible with both con
 
 Otherwise, the game works as you'd expect, and supports most, if not all mods that don't use dynamic libraries.
 
-## ***"Why? Doesn't ioquake3-nx already exist?"***
-It does, and this project uses some of it's code! But the releases requires a copy of baseq3 (which is non-free) to launch, so this fork tweaks a few variables to launch OpenArena (a free clone) as a standalone game.
+## **Controls**
+- Left Trigger - Jump
+- Right Trigger - Attack
+- Left Bumper - Crouch (or brings up keyboard when text fields are selected)
+- X - Use
+- Y - Taunt / Toggle Console (menu)
+- A - Select
+- D-Pad Left + Right - Weapon Select
+- D-Pad Up - Zoom
+- D-Pad Down - Toggle Console (in-game)
+- Minus - Scores
+- Plus - Menu
+- Left Stick In - Vote No
+- Right Stick In - Vote Yes
 
 ## **TODO**
 - Diagnose sleep issue.
-- Possibly move to vkQuake3 engine if/when DevKitPro + nouveau supports Vulkan.
 - Implement splitscreen multiplayer (probably via switching to the Spearmint engine)
 
 ## **Credits**
