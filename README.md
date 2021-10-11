@@ -1,3 +1,34 @@
+## **OpenArenaNX-Spearmint - Experimental Splitscreen Build**
+A port of ioquake3 + OpenArena for the Nintendo Switch. Compatible with both controllers and keyboard + mouse controls! Based off of ioquake3 1.36 and OpenArena 3.00a. Also includes a q3a branch for playing regular Quake III Arena.
+
+## **Installation (DOES NOT WORK YET, NO SUCCESSFUL BUILDS EXIST AS OF THIS MESSAGE!)**
+- Latest full build including game files can be downloaded and copied from <a href="https://accela.design/downloads/switch-homebrew/OpenArenaNX-Spearmint.zip">here!<br/></a>
+- Copy release files to /switch/ folder
+- If providing your own baseoa files, copy baseoa from a copy of OpenArena, making sure not to replace any files.
+- Launch via HBMenu (by pressing R, not album!)
+- Start fragging!
+
+## **Bugs** (N/A)
+
+## ***"Why? Doesn't ioquake3-nx already exist?"***
+It does, and this project uses some of it's code! But the releases requires a copy of baseq3 (which is non-free) to launch, so this fork tweaks a few variables to launch OpenArena (a free clone) as a standalone game. Also includes engine improvements from Spearmint for 2-4 player local splitscreen, improving it's enjoyability as a Switch title.
+
+## **TODO**
+- Compile a successful build.
+
+## **Credits**
+- ioquake3 team (original engine)
+- spearmint team (updated engine)
+- OpenArena team (game assets)
+- DevKitPro team (compilation tools)
+- fgsfdsfgs (original ioquake3-nx port)
+- and many others!
+
+[![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://www.paypal.com/donate/?cmd=_s-xclick&hosted_button_id=8GF4A3XS7ZHFY)
+
+
+## **Original ReadMe**
+
 <img src="https://raw.githubusercontent.com/zturtleman/spearmint/master/misc/spearmint_text.png" width="256">
 
 **Spearmint** is a fork of [ioquake3](https://github.com/ioquake/ioq3) with two main goals; 1) provide a flexible engine for creating new games and mods, 2) support features from (and running) various id Tech 3-based games.
