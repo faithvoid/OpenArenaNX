@@ -2,8 +2,9 @@
 A port of ioquake3 for the Nintendo Switch. Compatible with both controllers and keyboard + mouse controls! Based off of ioquake3 1.36.
 
 ## **Installation**
+- Latest full build including demo game files can be downloaded and copied from <a href="https://accela.design/downloads/switch-homebrew/Q3ArenaNXDemo.zip">here!<br/></a>
 - Copy release files to /switch/ folder
-- Copy baseq3 files from an existing installation of Quake III Arena into the same folder as the .nro, making sure not to replace any files.
+- Copy baseq3 files from an existing installation of Quake III Arena into the same folder as the .nro if you're not using the download above, making sure not to replace any files.
 - Launch via HBMenu (by pressing R, not album!)
 - Start fragging!
 
