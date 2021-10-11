@@ -14,7 +14,7 @@ It does, and this project uses some of it's code! But the releases requires a co
 - Start fragging!
 
 ## **Bugs**
-- Sleep mode causes the game and sometimes Horizon to crash. No idea what's causing this yet.
+- Sleep mode causes the game and sometimes Horizon to crash. No idea what's causing this yet, any help figuring it out would be much appreciated!
 - A small amount of slowdown can happen during really hectic battles in larger maps. This happens regardless of graphical settings (although dropping the resolution via the .cfg files may help, as the in-game display menu only supports 720p and 1080p).
 - If you switch between controller and keyboard + mouse input mid-match, your camera may start spinning wildly. Just press ESC/+, click with your desired input, then press ESC/+ again and it should resolve it. This might not even be a real bug and might just be my wireless keyboard, but I'm putting it here just to be safe.
 
