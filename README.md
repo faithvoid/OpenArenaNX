@@ -33,6 +33,9 @@ It does, and this project uses some of it's code! But the releases requires a co
 - fgsfdsfgs (original ioquake3-nx port)
 - and many others!
 
+[![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://www.paypal.com/donate/?cmd=_s-xclick&hosted_button_id=8GF4A3XS7ZHFY)
+
+
 ## **Original ReadMe**
 
 ![Build](https://github.com/ioquake/ioq3/workflows/Build/badge.svg)
