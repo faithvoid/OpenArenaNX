@@ -1298,13 +1298,14 @@ IN_InitGyro
 */
 void IN_InitGyro( void )
 {
-	hidGetSixAxisSensorHandles(&sixaxis_handles[0], 2, HidNpadIdType_No1, HidNpadStyleTag_NpadJoyDual);
-		hidGetSixAxisSensorHandles(&sixaxis_handles[2], 1, HidNpadIdType_No1, HidNpadStyleTag_NpadFullKey);
-		hidGetSixAxisSensorHandles(&sixaxis_handles[3], 1, HidNpadIdType_Handheld, HidNpadStyleTag_NpadHandheld);
-		hidStartSixAxisSensor(sixaxis_handles[0]);
-		hidStartSixAxisSensor(sixaxis_handles[1]);
-		hidStartSixAxisSensor(sixaxis_handles[2]);
-		hidStartSixAxisSensor(sixaxis_handles[3]);
+
+hidGetSixAxisSensorHandles(&sixaxis_handles[0], 1, HidNpadIdType_Handheld, HidNpadStyleTag_NpadHandheld);
+hidGetSixAxisSensorHandles(&sixaxis_handles[1], 1, HidNpadIdType_No1,      HidNpadStyleTag_NpadFullKey);
+hidGetSixAxisSensorHandles(&sixaxis_handles[2], 2, HidNpadIdType_No1,      HidNpadStyleTag_NpadJoyDual);
+hidStartSixAxisSensor(sixaxis_handles[0]);
+hidStartSixAxisSensor(sixaxis_handles[1]);
+hidStartSixAxisSensor(sixaxis_handles[2]);
+hidStartSixAxisSensor(sixaxis_handles[3]);
 }
 
 
@@ -1318,14 +1319,13 @@ void IN_ProcessGyro( void )
   if( in_gyromouse->integer ) {
 		HidSixAxisSensorState sixaxis = { 0 };
 				const u64 stylemask = hidGetNpadStyleSet(HidNpadIdType_No1) | hidGetNpadStyleSet(HidNpadIdType_Handheld);
-				size_t numstates = 0;
 				if (stylemask & HidNpadStyleTag_NpadHandheld)
-					numstates = hidGetSixAxisSensorStates(sixaxis_handles[3], &sixaxis, 1);
+				hidGetSixAxisSensorStates(sixaxis_handles[0], &sixaxis, 1);
 				else if (stylemask & HidNpadStyleTag_NpadFullKey)
-					numstates = hidGetSixAxisSensorStates(sixaxis_handles[2], &sixaxis, 1);
+				hidGetSixAxisSensorStates(sixaxis_handles[1], &sixaxis, 1);
 				else if (stylemask & HidNpadStyleTag_NpadJoyDual) // hope to god right joycon is connected
-					numstates = hidGetSixAxisSensorStates(sixaxis_handles[0], &sixaxis, 1);
-				if (numstates)
+				hidGetSixAxisSensorStates(sixaxis_handles[2, 3], &sixaxis, 1);
+
 
     if ( in_gyromouse_debug->integer ) {
 			Com_Printf("Acceleration:     x=% .4f, y=% .4f, z=% .4f\n", sixaxis.angular_velocity.x, sixaxis.angular_velocity.y, sixaxis.angular_velocity.z);
@@ -1333,9 +1333,9 @@ void IN_ProcessGyro( void )
 						 "                  [ % .4f,   % .4f,   % .4f ]\n"
 						 "                  [ % .4f,   % .4f,   % .4f ]\n"
 						 "                  [ % .4f,   % .4f,   % .4f ]\n",
-						 sixaxis.direction.direction[0][3], sixaxis.direction.direction[1][3], sixaxis.direction.direction[2][3],
-             sixaxis.direction.direction[0][2], sixaxis.direction.direction[1][2], sixaxis.direction.direction[2][2],
-             sixaxis.direction.direction[0][0], sixaxis.direction.direction[1][0], sixaxis.direction.direction[2][0]);
+						 sixaxis.direction.direction[0][0], sixaxis.direction.direction[1][0], sixaxis.direction.direction[2][0],
+             sixaxis.direction.direction[0][1], sixaxis.direction.direction[1][1], sixaxis.direction.direction[2][1],
+             sixaxis.direction.direction[0][2], sixaxis.direction.direction[1][2], sixaxis.direction.direction[2][2]);
     }
 
     float pitch = sixaxis.angular_velocity.x;
