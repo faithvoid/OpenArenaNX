@@ -1324,7 +1324,7 @@ void IN_ProcessGyro( void )
 				else if (stylemask & HidNpadStyleTag_NpadFullKey)
 					numstates = hidGetSixAxisSensorStates(sixaxis_handles[2], &sixaxis, 1);
 				else if (stylemask & HidNpadStyleTag_NpadJoyDual) // hope to god right joycon is connected
-					numstates = hidGetSixAxisSensorStates(sixaxis_handles[1], &sixaxis, 1);
+					numstates = hidGetSixAxisSensorStates(sixaxis_handles[0], &sixaxis, 1);
 				if (numstates)
 
     if ( in_gyromouse_debug->integer ) {
