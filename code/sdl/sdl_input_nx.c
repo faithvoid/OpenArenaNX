@@ -1333,9 +1333,9 @@ void IN_ProcessGyro( void )
 						 "                  [ % .4f,   % .4f,   % .4f ]\n"
 						 "                  [ % .4f,   % .4f,   % .4f ]\n"
 						 "                  [ % .4f,   % .4f,   % .4f ]\n",
-						 sixaxis.direction.direction[0][0], sixaxis.direction.direction[1][0], sixaxis.direction.direction[2][0],
-             sixaxis.direction.direction[0][1], sixaxis.direction.direction[1][1], sixaxis.direction.direction[2][1],
-             sixaxis.direction.direction[0][2], sixaxis.direction.direction[1][2], sixaxis.direction.direction[2][2]);
+						 sixaxis.direction.direction[0][3], sixaxis.direction.direction[1][3], sixaxis.direction.direction[2][3],
+             sixaxis.direction.direction[0][2], sixaxis.direction.direction[1][2], sixaxis.direction.direction[2][2],
+             sixaxis.direction.direction[0][0], sixaxis.direction.direction[1][0], sixaxis.direction.direction[2][0]);
     }
 
     float pitch = sixaxis.angular_velocity.x;
