@@ -122,6 +122,8 @@ typedef struct
 #define ID_JOYENABLE	40
 #define ID_JOYTHRESHOLD	41
 #define ID_SMOOTHMOUSE	42
+#define ID_GYROENABLE	43
+#define ID_INVERTGYRO	44
 
 #define ANIM_IDLE		0
 #define ANIM_RUN		1
@@ -209,6 +211,8 @@ typedef struct
 	menuaction_s		togglemenu;
 	menuradiobutton_s	joyenable;
 	menuslider_s		joythreshold;
+	menuradiobutton_s	gyroenable;
+	menuradiobutton_s	gyroinvert;
 	int					section;
 	qboolean			waitingforkey;
 	char				playerModel[64];
@@ -277,6 +281,8 @@ static configcvar_t g_configcvars[] =
 	{"joy_threshold",	0,					0},
 	{"m_filter",		0,					0},
 	{"cl_freelook",		0,					0},
+	{"in_gyromouse",		0,					0},
+	{"in_gyromouse_pitch",		0,					0},
 	{NULL,				0,					0}
 };
 
@@ -325,6 +331,8 @@ static menucommon_s *g_looking_controls[] = {
 	(menucommon_s *)&s_controls.zoomview,
 	(menucommon_s *)&s_controls.joyenable,
 	(menucommon_s *)&s_controls.joythreshold,
+	(menucommon_s *)&s_controls.gyroenable,
+	(menucommon_s *)&s_controls.gyroinvert,
 	NULL,
 };
 
@@ -815,6 +823,8 @@ static void Controls_GetConfig( void )
 	s_controls.joyenable.curvalue    = UI_ClampCvar( 0, 1, Controls_GetCvarValue( "in_joystick" ) );
 	s_controls.joythreshold.curvalue = UI_ClampCvar( 0.05f, 0.75f, Controls_GetCvarValue( "joy_threshold" ) );
 	s_controls.freelook.curvalue     = UI_ClampCvar( 0, 1, Controls_GetCvarValue( "cl_freelook" ) );
+	s_controls.gyroenable.curvalue   = UI_ClampCvar( 0, 1, Controls_GetCvarValue( "in_gyromouse" ) );
+	s_controls.gyroinvert.curvalue   = Controls_GetCvarValue( "in_gyromouse_pitch" ) < 0;
 }
 
 /*
@@ -857,6 +867,13 @@ static void Controls_SetConfig( void )
 	trap_Cvar_SetValue( "in_joystick", s_controls.joyenable.curvalue );
 	trap_Cvar_SetValue( "joy_threshold", s_controls.joythreshold.curvalue );
 	trap_Cvar_SetValue( "cl_freelook", s_controls.freelook.curvalue );
+
+	trap_Cvar_SetValue( "in_gyromouse", s_controls.gyroenable.curvalue );
+	if ( s_controls.gyroinvert.curvalue )
+		trap_Cvar_SetValue( "in_gyromouse_pitch", -fabs( trap_Cvar_VariableValue( "in_gyromouse_pitch" ) ) );
+	else
+		trap_Cvar_SetValue( "in_gyromouse_pitch", fabs( trap_Cvar_VariableValue( "in_gyromouse_pitch" ) ) );
+
 	trap_Cmd_ExecuteText( EXEC_APPEND, "in_restart\n" );
 }
 
@@ -891,6 +908,8 @@ static void Controls_SetDefaults( void )
 	s_controls.joyenable.curvalue    = Controls_GetCvarDefault( "in_joystick" );
 	s_controls.joythreshold.curvalue = Controls_GetCvarDefault( "joy_threshold" );
 	s_controls.freelook.curvalue     = Controls_GetCvarDefault( "cl_freelook" );
+	s_controls.gyroenable.curvalue   = Controls_GetCvarDefault( "in_gyromouse" );
+	s_controls.gyroinvert.curvalue   = Controls_GetCvarDefault( "in_gyromouse_pitch" ) < 0;
 }
 
 /*
@@ -1121,6 +1140,8 @@ static void Controls_MenuEvent( void* ptr, int event )
 		case ID_AUTOSWITCH:
 		case ID_JOYENABLE:
 		case ID_JOYTHRESHOLD:
+		case ID_GYROENABLE:
+		case ID_INVERTGYRO:
 			if (event == QM_ACTIVATED)
 			{
 				s_controls.changesmade = qtrue;
@@ -1560,6 +1581,22 @@ static void Controls_MenuInit( void )
 	s_controls.joythreshold.maxvalue		  = 0.75f;
 	s_controls.joythreshold.generic.statusbar = Controls_StatusBar;
 
+	s_controls.gyroenable.generic.type      = MTYPE_RADIOBUTTON;
+	s_controls.gyroenable.generic.flags     = QMF_SMALLFONT;
+	s_controls.gyroenable.generic.x         = SCREEN_WIDTH/2;
+	s_controls.gyroenable.generic.name      = "gyro aiming";
+	s_controls.gyroenable.generic.id        = ID_GYROENABLE;
+	s_controls.gyroenable.generic.callback  = Controls_MenuEvent;
+	s_controls.gyroenable.generic.statusbar = Controls_StatusBar;
+
+	s_controls.gyroinvert.generic.type      = MTYPE_RADIOBUTTON;
+	s_controls.gyroinvert.generic.flags     = QMF_SMALLFONT;
+	s_controls.gyroinvert.generic.x         = SCREEN_WIDTH/2;
+	s_controls.gyroinvert.generic.name      = "invert gyro pitch";
+	s_controls.gyroinvert.generic.id        = ID_INVERTGYRO;
+	s_controls.gyroinvert.generic.callback  = Controls_MenuEvent;
+	s_controls.gyroinvert.generic.statusbar = Controls_StatusBar;
+
 	s_controls.name.generic.type	= MTYPE_PTEXT;
 	s_controls.name.generic.flags	= QMF_CENTER_JUSTIFY|QMF_INACTIVE;
 	s_controls.name.generic.x		= 320;
@@ -1590,6 +1627,9 @@ static void Controls_MenuInit( void )
 	Menu_AddItem( &s_controls.menu, &s_controls.zoomview );
 	Menu_AddItem( &s_controls.menu, &s_controls.joyenable );
 	Menu_AddItem( &s_controls.menu, &s_controls.joythreshold );
+
+	Menu_AddItem( &s_controls.menu, &s_controls.gyroenable );
+	Menu_AddItem( &s_controls.menu, &s_controls.gyroinvert );
 
 	Menu_AddItem( &s_controls.menu, &s_controls.alwaysrun );
 	Menu_AddItem( &s_controls.menu, &s_controls.run );
