@@ -2,10 +2,10 @@
 A port of ioquake3 for the Nintendo Switch. Compatible with both controllers and keyboard + mouse controls! Based off of ioquake3 1.36.
 
 ### ***"Why? Doesn't ioquake3-nx already exist?"***
-It does, and this project uses some of it's code! But it's slightly out of date, so this branch exists to keep it updated somewhat, with the hopeful inclusion of splitscreen multiplayer in the near future.
+It does, and this project uses some of it's code! But this project aims to fix a few issues that build has, keep it updated, and eventually implement local splitscreen co-op.
 
 ## **Installation**
-- Latest full build including demo game files can be downloaded and copied from <a href="https://accela.design/downloads/switch-homebrew/Q3ArenaNXDemo.zip">here!<br/></a>
+- Latest stable full build including demo game files can be downloaded and copied from <a href="https://accela.design/downloads/switch-homebrew/Q3ArenaNXDemo.zip">here!<br/></a>
 - Copy release files to /switch/ folder
 - Copy baseq3 files from an existing installation of Quake III Arena into the same folder as the .nro if you're not using the download above, making sure not to replace any files.
 - Launch via HBMenu (by pressing R, not album!)
@@ -36,7 +36,8 @@ Otherwise, the game works as you'd expect, and supports most, if not all mods th
 
 ## **TODO**
 - Diagnose sleep issue.
-- Implement splitscreen multiplayer (probably via moving code from here to the Spearmint engine branch)
+- Implement gyro (75% of the way done, I've made a hacky workaround to re-implement fgsfdsfgs's sdl_input_nx.c that needs some tweaking if anyone can help!)
+- Implement splitscreen multiplayer (probably via switching to the Spearmint engine)
 
 ## **Credits**
 - ioquake3 team (engine)
