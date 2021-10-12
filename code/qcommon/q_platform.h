@@ -251,7 +251,6 @@ Suite 120, Rockville, Maryland 20850 USA.
 
 #define DLL_EXT ".so"
 
-
 #endif
 
 //================================================================= SUNOS ===
