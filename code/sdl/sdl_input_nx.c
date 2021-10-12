@@ -46,6 +46,15 @@ static qboolean mouseActive = qfalse;
 static cvar_t *in_mouse             = NULL;
 static cvar_t *in_nograb;
 
+static cvar_t *in_gyromouse          = NULL;
+static cvar_t *in_gyromouse_pitch    = NULL; // Negative values invert
+static cvar_t *in_gyromouse_yaw      = NULL; // Negative values invert
+static cvar_t *in_gyromouse_pitch_ui = NULL; // Negative values invert (in-menu)
+static cvar_t *in_gyromouse_yaw_ui   = NULL; // Negative values invert (in-menu)
+static cvar_t *in_gyromouse_yaw_axis     = NULL; // 0 = .y is yaw, 1 = .z is yaw
+static cvar_t *in_gyromouse_debug    = NULL;
+static HidSixAxisSensorHandle sixaxis_handles[4];
+
 static cvar_t *in_joystick          = NULL;
 static cvar_t *in_joystickThreshold = NULL;
 static cvar_t *in_joystickNo        = NULL;
@@ -1282,6 +1291,79 @@ static void IN_ProcessEvents( void )
 	}
 }
 
+/*
+===============
+IN_InitGyro
+===============
+*/
+void IN_InitGyro( void )
+{
+	hidGetSixAxisSensorHandles(&sixaxis_handles[0], 2, HidNpadIdType_No1, HidNpadStyleTag_NpadJoyDual);
+		hidGetSixAxisSensorHandles(&sixaxis_handles[2], 1, HidNpadIdType_No1, HidNpadStyleTag_NpadFullKey);
+		hidGetSixAxisSensorHandles(&sixaxis_handles[3], 1, HidNpadIdType_Handheld, HidNpadStyleTag_NpadHandheld);
+		hidStartSixAxisSensor(sixaxis_handles[0]);
+		hidStartSixAxisSensor(sixaxis_handles[1]);
+		hidStartSixAxisSensor(sixaxis_handles[2]);
+		hidStartSixAxisSensor(sixaxis_handles[3]);
+}
+
+
+/*
+===============
+IN_ProcessGyro
+===============
+*/
+void IN_ProcessGyro( void )
+{
+  if( in_gyromouse->integer ) {
+		HidSixAxisSensorState sixaxis = { 0 };
+				const u64 stylemask = hidGetNpadStyleSet(HidNpadIdType_No1) | hidGetNpadStyleSet(HidNpadIdType_Handheld);
+				size_t numstates = 0;
+				if (stylemask & HidNpadStyleTag_NpadHandheld)
+					numstates = hidGetSixAxisSensorStates(sixaxis_handles[3], &sixaxis, 1);
+				else if (stylemask & HidNpadStyleTag_NpadFullKey)
+					numstates = hidGetSixAxisSensorStates(sixaxis_handles[2], &sixaxis, 1);
+				else if (stylemask & HidNpadStyleTag_NpadJoyDual) // hope to god right joycon is connected
+					numstates = hidGetSixAxisSensorStates(sixaxis_handles[1], &sixaxis, 1);
+				if (numstates)
+
+    if ( in_gyromouse_debug->integer ) {
+			Com_Printf("Acceleration:     x=% .4f, y=% .4f, z=% .4f\n", sixaxis.angular_velocity.x, sixaxis.angular_velocity.y, sixaxis.angular_velocity.z);
+			Com_Printf("Direction matrix:\n"
+						 "                  [ % .4f,   % .4f,   % .4f ]\n"
+						 "                  [ % .4f,   % .4f,   % .4f ]\n"
+						 "                  [ % .4f,   % .4f,   % .4f ]\n",
+						 sixaxis.direction.direction[0][3], sixaxis.direction.direction[1][3], sixaxis.direction.direction[2][3],
+             sixaxis.direction.direction[0][2], sixaxis.direction.direction[1][2], sixaxis.direction.direction[2][2],
+             sixaxis.direction.direction[0][0], sixaxis.direction.direction[1][0], sixaxis.direction.direction[2][0]);
+    }
+
+    float pitch = sixaxis.angular_velocity.x;
+    float yaw = in_gyromouse_yaw_axis->integer ? sixaxis.angular_velocity.z : sixaxis.angular_velocity.y;
+    if( clc.state == CA_DISCONNECTED || clc.state == CA_CINEMATIC || ( Key_GetCatcher( ) & KEYCATCH_UI ) ) {
+      pitch *= in_gyromouse_pitch_ui->value;
+      yaw *= in_gyromouse_yaw_ui->value;
+    } else {
+      pitch *= in_gyromouse_pitch->value;
+      yaw *= in_gyromouse_yaw->value;
+    }
+
+    Com_QueueEvent( in_eventTime, SE_MOUSE, yaw, pitch, 0, NULL );
+  }
+}
+
+/*
+===============
+IN_ShutdownGyro
+===============
+*/
+void IN_ShutdownGyro( void )
+{
+	hidStopSixAxisSensor(sixaxis_handles[0]);
+	hidStopSixAxisSensor(sixaxis_handles[1]);
+	hidStopSixAxisSensor(sixaxis_handles[2]);
+	hidStopSixAxisSensor(sixaxis_handles[3]);
+}
 
 /*
 ===============
@@ -1319,6 +1401,8 @@ void IN_Frame( void )
 		IN_ActivateMouse( cls.glconfig.isFullscreen );
 
 	IN_ProcessEvents( );
+
+	IN_ProcessGyro( );
 
 	// Set event time for next frame to earliest possible time an event could happen
 	in_eventTime = Sys_Milliseconds( );
@@ -1359,6 +1443,14 @@ void IN_Init( void *windowData )
 	in_mouse = Cvar_Get( "in_mouse", "1", CVAR_ARCHIVE );
 	in_nograb = Cvar_Get( "in_nograb", "0", CVAR_ARCHIVE );
 
+	in_gyromouse = Cvar_Get( "in_gyromouse", "0", CVAR_ARCHIVE );
+	in_gyromouse_debug = Cvar_Get( "in_gyromouse_debug", "0", CVAR_ARCHIVE );
+	in_gyromouse_yaw_axis = Cvar_Get( "in_gyromouse_yaw_axis", "0", CVAR_ARCHIVE );
+	in_gyromouse_pitch = Cvar_Get( "in_gyromouse_pitch", "-10.0", CVAR_ARCHIVE );
+	in_gyromouse_yaw = Cvar_Get( "in_gyromouse_yaw", "-20.0", CVAR_ARCHIVE );
+	in_gyromouse_pitch_ui = Cvar_Get( "in_gyromouse_pitch_ui", "0.0", CVAR_ARCHIVE );
+	in_gyromouse_yaw_ui = Cvar_Get( "in_gyromouse_yaw_ui", "0.0", CVAR_ARCHIVE );
+
 	in_joystick = Cvar_Get( "in_joystick", "1", CVAR_ARCHIVE|CVAR_LATCH );
 	in_joystickThreshold = Cvar_Get( "joy_threshold", "0.15", CVAR_ARCHIVE );
 
@@ -1370,6 +1462,8 @@ void IN_Init( void *windowData )
 	Cvar_SetValue( "com_minimized", appState & SDL_WINDOW_MINIMIZED );
 
 	IN_InitJoystick( );
+
+	IN_InitGyro( );
 
 	IN_InitKeys( );
 
@@ -1389,6 +1483,8 @@ void IN_Shutdown( void )
 	mouseAvailable = qfalse;
 
 	IN_ShutdownJoystick( );
+
+	IN_ShutdownGyro( );
 
 	SDL_window = NULL;
 }
