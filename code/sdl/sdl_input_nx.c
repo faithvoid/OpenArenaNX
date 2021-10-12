@@ -1328,7 +1328,7 @@ void IN_ProcessGyro( void )
 
 
     if ( in_gyromouse_debug->integer ) {
-			Com_Printf("Acceleration:     x=% .4f, y=% .4f, z=% .4f\n", sixaxis.angular_velocity.x, sixaxis.angular_velocity.y, sixaxis.angular_velocity.z);
+			Com_Printf("Angular Velocity:     x=% .4f, y=% .4f, z=% .4f\n", sixaxis.angular_velocity.x, sixaxis.angular_velocity.y, sixaxis.angular_velocity.z);
 			Com_Printf("Direction matrix:\n"
 						 "                  [ % .4f,   % .4f,   % .4f ]\n"
 						 "                  [ % .4f,   % .4f,   % .4f ]\n"
