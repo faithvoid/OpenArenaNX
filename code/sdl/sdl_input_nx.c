@@ -1343,9 +1343,9 @@ void IN_ProcessGyro( void )
 				hidGetSixAxisSensorStates(sixaxis_handles[1], &sixaxis, 1);
 				else if (style_set & HidNpadStyleTag_NpadJoyDual)
 				// For JoyDual, read from either the Left or Right Joy-Con depending on which is/are connected
-            if (attrib & HidNpadAttribute_IsLeftConnected)
-                hidGetSixAxisSensorStates(sixaxis_handles[2], &sixaxis, 1);
-            else if (attrib & HidNpadAttribute_IsRightConnected)
+        //    if (attrib & HidNpadAttribute_IsLeftConnected)
+          //      hidGetSixAxisSensorStates(sixaxis_handles[2], &sixaxis, 1);
+            if (attrib & HidNpadAttribute_IsRightConnected)
                 hidGetSixAxisSensorStates(sixaxis_handles[3], &sixaxis, 1);
 
 
