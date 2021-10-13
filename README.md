@@ -1,5 +1,5 @@
 ## **Q3ArenaNX**
-A port of ioquake3 for the Nintendo Switch. Compatible with both controllers and keyboard + mouse controls! Based off of ioquake3 1.36.
+A port of ioquake3 for the Nintendo Switch. Compatible with both controllers (including WIP gyroscope support!) and keyboard + mouse controls! Based off of ioquake3 1.36.
 
 ### ***"Why? Doesn't ioquake3-nx already exist?"***
 It does, and this project uses some of it's code! But this project aims to fix a few issues that build has, keep it updated, and eventually implement local splitscreen co-op.
