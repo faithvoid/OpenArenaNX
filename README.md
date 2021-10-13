@@ -41,7 +41,7 @@ Gyro controls can be enabled from the controls section of the settings menu.
 
 ## **TODO**
 - Diagnose sleep issue.
-- Make gyro work better (it works okay as of the latest gyro-enabled version, but it feels slightly janky and with wireless controllers requires you to have the controller pointing upwards.)
+- Make gyro controls autodetect controller type and switch yaw axis between yaw/roll accordingly.
 - Implement splitscreen multiplayer (probably via switching to the Spearmint engine which requires a renderer/controller code overhaul at minimum.)
 
 ## **Credits**
