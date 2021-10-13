@@ -38,8 +38,8 @@ Otherwise, the game works as you'd expect, and supports most, if not all mods th
 
 ## **TODO**
 - Diagnose sleep issue.
-- Implement gyro (75% of the way done, I've made a hacky workaround to re-implement fgsfdsfgs's sdl_input_nx.c that needs some tweaking if anyone can help!)
-- Implement splitscreen multiplayer (probably via switching to the Spearmint engine)
+- Make gyro work better (it works okay as of the latest gyro-enabled version, but it feels slightly janky and with wireless controllers requires you to have the controller pointing upwards.)
+- Implement splitscreen multiplayer (probably via switching to the Spearmint engine which requires a renderer/controller code overhaul at minimum.)
 
 ## **Credits**
 - ioquake3 team (engine)
