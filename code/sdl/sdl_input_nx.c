@@ -1271,6 +1271,18 @@ static void IN_ProcessEvents( void )
 							Cvar_SetValue( "r_customheight", height );
 							Cvar_Set( "r_mode", "-1" );
 
+							// WIP Quick and dirty yaw axis fix.
+
+							if (HidNpadIdType_Handheld)
+							{
+							Cvar_Set( "in_gyromouse_yaw_axis", "0" );
+						}
+						else
+						{
+							Cvar_Set( "in_gyromouse_yaw_axis", "1" );
+						}
+
+
 							// Wait until user stops dragging for 1 second, so
 							// we aren't constantly recreating the GL context while
 							// he tries to drag...
