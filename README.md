@@ -42,7 +42,7 @@ Gyro controls can be enabled from the controls section of the settings menu.
 
 ## **TODO**
 - Diagnose sleep issue.
-- Make gyro controls autodetect controller type and switch yaw axis between yaw/roll accordingly.
+- Make gyro controls autodetect controller type and switch yaw axis between yaw/roll accordingly (most likely by implementing somme sort of code in sdl_input_nx.c that detects whether player 1 (NpadIdType_No1) is NpadHandheld or NpadFullKey/NpadJoyDual and calls the appropriate cvar.)
 - Implement splitscreen multiplayer (probably via switching to the Spearmint engine which requires a renderer/controller code overhaul at minimum.)
 
 ## **Credits**
