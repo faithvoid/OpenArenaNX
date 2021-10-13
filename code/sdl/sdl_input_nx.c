@@ -1271,6 +1271,18 @@ static void IN_ProcessEvents( void )
 							Cvar_SetValue( "r_customheight", height );
 							Cvar_Set( "r_mode", "-1" );
 
+							// WIP Quick and dirty yaw axis fix.
+
+							if (HidNpadIdType_Handheld)
+							{
+							Cvar_Set( "in_gyromouse_yaw_axis", "0" );
+						}
+						else
+						{
+							Cvar_Set( "in_gyromouse_yaw_axis", "1" );
+						}
+
+
 							// Wait until user stops dragging for 1 second, so
 							// we aren't constantly recreating the GL context while
 							// he tries to drag...
@@ -1331,10 +1343,14 @@ void IN_ProcessGyro( void )
 				hidGetSixAxisSensorStates(sixaxis_handles[1], &sixaxis, 1);
 				else if (style_set & HidNpadStyleTag_NpadJoyDual)
 				// For JoyDual, read from either the Left or Right Joy-Con depending on which is/are connected
-            if (attrib & HidNpadAttribute_IsLeftConnected)
-                hidGetSixAxisSensorStates(sixaxis_handles[2], &sixaxis, 1);
-            else if (attrib & HidNpadAttribute_IsRightConnected)
+//            if (attrib & HidNpadAttribute_IsLeftConnected)
+//                hidGetSixAxisSensorStates(sixaxis_handles[2], &sixaxis, 1);
+            if (attrib & HidNpadAttribute_IsRightConnected)
                 hidGetSixAxisSensorStates(sixaxis_handles[3], &sixaxis, 1);
+								// Test for dual controllers.
+								if (attrib & HidNpadJoyAssignmentMode_Dual)
+		                hidGetSixAxisSensorStates(sixaxis_handles[2,3], &sixaxis, 1);
+
 
 
     if ( in_gyromouse_debug->integer ) {
