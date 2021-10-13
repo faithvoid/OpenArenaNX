@@ -34,6 +34,18 @@ Otherwise, the game works as you'd expect, and supports most, if not all mods th
 - Left Stick In - Vote No
 - Right Stick In - Vote Yes
 
+## Enable Gyro (EXPERIMENTAL)
+Modify your q3config.cfg file to add these variables.
+```
+seta in_gyromouse "1"
+seta in_gyromouse_debug "0"
+seta in_gyromouse_yaw_axis "0" // 0 for handheld, 1 for controller. Type the command in console without "seta" to swap between modes in-game.
+seta in_gyromouse_pitch "-10"
+seta in_gyromouse_yaw "-20.0"
+seta in_gyromouse_pitch_ui "0.0"
+seta in_gyromouse_yaw_ui "0.0"
+```
+
 ## **TODO**
 - Diagnose sleep issue.
 - Implement gyro (75% of the way done, I've made a hacky workaround to re-implement fgsfdsfgs's sdl_input_nx.c that needs some tweaking if anyone can help!)
