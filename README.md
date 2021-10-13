@@ -1,5 +1,5 @@
 ## **OpenArenaNX**
-A port of ioquake3 + OpenArena for the Nintendo Switch. Compatible with both controllers and keyboard + mouse controls! Based off of ioquake3 1.36 and OpenArena 3.00a. Also includes a q3a branch for playing regular Quake III Arena.
+A port of ioquake3 + OpenArena for the Nintendo Switch. Compatible with both controllers (including WIP gyroscope support!) and keyboard + mouse controls! Based off of ioquake3 1.36 and OpenArena 3.00a. Also includes a q3a branch for playing regular Quake III Arena.
 
 ![20211009_100312](https://user-images.githubusercontent.com/56975081/136676741-83c50a67-0df4-4e8f-b294-ba6eb94c709f.jpg)
 
