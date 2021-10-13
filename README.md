@@ -21,6 +21,8 @@ It does, and this project uses some of it's code! But the releases requires a co
 Otherwise, the game works as you'd expect, and supports most, if not all mods that don't use dynamic libraries.
 
 ## **Controls**
+Gyro controls can be enabled from the controls section of the settings menu.
+
 - Left Trigger - Jump
 - Right Trigger - Attack
 - Left Bumper - Crouch (or brings up keyboard when text fields are selected)
@@ -36,7 +38,6 @@ Otherwise, the game works as you'd expect, and supports most, if not all mods th
 - Left Stick In - Vote No
 - Right Stick In - Vote Yes
 
-Gyro controls can be enabled from the controls section of the settings menu.
 
 ## **TODO**
 - Diagnose sleep issue.
