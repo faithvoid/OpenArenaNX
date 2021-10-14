@@ -55,6 +55,7 @@ static cvar_t *in_gyromouse_yaw_axis     = NULL; // 0 = .y is yaw, 1 = .z is yaw
 static cvar_t *in_gyromouse_debug    = NULL;
 static HidSixAxisSensorHandle sixaxis_handles[4];
 static PadState pad;
+static s32 prev_touchcount=0;
 
 static cvar_t *in_joystick          = NULL;
 static cvar_t *in_joystickThreshold = NULL;
@@ -1271,17 +1272,6 @@ static void IN_ProcessEvents( void )
 							Cvar_SetValue( "r_customheight", height );
 							Cvar_Set( "r_mode", "-1" );
 
-							// WIP Quick and dirty yaw axis fix.
-
-							if (HidNpadIdType_Handheld)
-							{
-							Cvar_Set( "in_gyromouse_yaw_axis", "0" );
-						}
-						else
-						{
-							Cvar_Set( "in_gyromouse_yaw_axis", "1" );
-						}
-
 
 							// Wait until user stops dragging for 1 second, so
 							// we aren't constantly recreating the GL context while
@@ -1351,6 +1341,18 @@ void IN_ProcessGyro( void )
 								if (attrib & HidNpadJoyAssignmentMode_Dual)
 		                hidGetSixAxisSensorStates(sixaxis_handles[2,3], &sixaxis, 1);
 
+										// I'm surprised this works. I feel like it shouldn't since it looks too simple, but it works somehow so I'm not touching this any more than I have to. tl;dr this checks if you're in handheld mode or not and automatically switches yaw axis mode between roll (0) and yaw (1) - faithvoid
+
+										if (padIsHandheld(&pad))
+										{
+										Cvar_Set( "in_gyromouse_yaw_axis", "0" );
+										}
+										else
+										{
+										Cvar_Set( "in_gyromouse_yaw_axis", "1" );
+										}
+
+
 
 
     if ( in_gyromouse_debug->integer ) {
@@ -1392,6 +1394,7 @@ void IN_ShutdownGyro( void )
 	hidStopSixAxisSensor(sixaxis_handles[2]);
 	hidStopSixAxisSensor(sixaxis_handles[3]);
 }
+
 
 /*
 ===============
