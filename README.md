@@ -1,5 +1,5 @@
 ## **OpenArenaNX**
-A port of ioquake3 + OpenArena for the Nintendo Switch. Compatible with both controllers (including WIP gyroscope support!) and keyboard + mouse controls! Based off of ioquake3 1.36 and OpenArena 3.00a. Also includes a q3a branch (Q3ArenaNX) for playing regular Quake III Arena.
+A port of ioquake3 + OpenArena for the Nintendo Switch. Compatible with both controllers (including gyroscope support!) and keyboard + mouse controls! Based off of ioquake3 1.36 and OpenArena 3.00a. Also includes a q3a branch (Q3ArenaNX) for playing regular Quake III Arena.
 
 ![20211009_100312](https://user-images.githubusercontent.com/56975081/136676741-83c50a67-0df4-4e8f-b294-ba6eb94c709f.jpg)
 
@@ -42,7 +42,6 @@ Gyro controls can be enabled from the controls section of the settings menu.
 
 ## **TODO**
 - Diagnose sleep issue.
-- Make gyro controls autodetect controller type and switch yaw axis between yaw/roll accordingly (most likely by implementing somme sort of code in sdl_input_nx.c that detects whether player 1 (NpadIdType_No1) is NpadHandheld or NpadFullKey/NpadJoyDual and calls the appropriate cvar.)
 - Implement splitscreen multiplayer (probably via switching to the Spearmint engine which requires a renderer/controller code overhaul at minimum.)
 
 ## **Credits**
