@@ -105,7 +105,7 @@ Suite 120, Rockville, Maryland 20850 USA.
 #define ID_INLINE __inline
 #define PATH_SEP '\\'
 
-#if defined( __WIN64__ )
+#if defined( __WIN64__ ) 
 #define ARCH_STRING "x86_64"
 #elif defined _M_ALPHA
 #define ARCH_STRING "AXP"

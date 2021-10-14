@@ -30,11 +30,11 @@ include $(DEVKITPRO)/libnx/switch_rules
 #     - icon.jpg
 #     - <libnx folder>/default_icon.jpg
 #---------------------------------------------------------------------------------
-APP_TITLE	:=	OpenArenaNX-Spearmint
+APP_TITLE	:=	Q3ArenaNX-Spearmint
 APP_AUTHOR	:=	faithvoid
-APP_VERSION	:=	0.7.5
+APP_VERSION	:=	0.7.6
 
-TARGET		:=	OpenArenaNX
+TARGET		:=	Q3ArenaNXSpearmint
 BUILD		:=	build
 SOURCES		:=
 
@@ -54,13 +54,17 @@ GL1_SOURCEFILES	:=\
 	code/renderercommon/tr_image_pcx.c \
 	code/renderercommon/tr_image_png.c \
 	code/renderercommon/tr_image_tga.c \
+	code/renderercommon/tr_image_dds.c \
+	code/renderercommon/tr_image_ftx.c \
 	code/renderergl1/tr_init.o \
 	code/renderergl1/tr_light.o \
 	code/renderergl1/tr_main.o \
 	code/renderergl1/tr_marks.o \
+	code/renderergl1/tr_cmesh.o \
 	code/renderergl1/tr_mesh.o \
 	code/renderergl1/tr_model.o \
 	code/renderergl1/tr_model_iqm.o \
+	code/renderergl1/tr_model_tan.c \
 	code/renderercommon/tr_noise.c \
 	code/renderergl1/tr_scene.o \
 	code/renderergl1/tr_shade.o \
@@ -69,6 +73,8 @@ GL1_SOURCEFILES	:=\
 	code/renderergl1/tr_shadows.o \
 	code/renderergl1/tr_sky.o \
 	code/renderergl1/tr_surface.o \
+	code/renderergl1/tr_animation_mdm.c \
+	code/renderergl1/tr_animation_mds.c \
 	code/renderergl1/tr_world.o
 
 # this one is more fancy, but only works if there's enough memory
@@ -111,6 +117,8 @@ GL2_SOURCEFILES	:=\
 	code/renderergl2/tr_surface.o \
 	code/renderergl2/tr_vbo.o \
 	code/renderergl2/tr_world.o \
+	code/renderergl2/tr_animation_mdm.c \
+	code/renderergl2/tr_animation_mds.c \
 	code/glad/glad.c \
 	\
 	code/renderergl2/glsl/bokeh_fp.c \
@@ -144,6 +152,7 @@ GL2_SOURCEFILES	:=\
 
 SOURCEFILES	:= \
 	code/client/cl_cgame.c \
+	code/client/cl_joystick.c \
 	code/client/cl_cin.c \
 	code/client/cl_console.c \
 	code/client/cl_input.c \
@@ -154,6 +163,13 @@ SOURCEFILES	:= \
 	code/client/cl_scrn.c \
 	code/client/cl_avi.c \
 	\
+	code/qcommon/bsp.c \
+	code/qcommon/bsp_q3.c \
+	code/qcommon/bsp_ef2.c \
+	code/qcommon/bsp_fakk.c \
+	code/qcommon/bsp_mohaa.c \
+	code/qcommon/bsp_sof2.c \
+	code/qcommon/bsp_q3test106.c \
 	code/qcommon/cm_load.c \
 	code/qcommon/cm_patch.c \
 	code/qcommon/cm_polylib.c \
@@ -183,6 +199,7 @@ SOURCEFILES	:= \
 	code/client/snd_codec_wav.c \
 	code/client/snd_codec_ogg.c \
 	code/client/snd_codec_opus.c \
+	code/client/snd_codec_mp3.c \
 	\
 	code/client/qal.c \
 	code/client/snd_openal.c \
@@ -198,9 +215,12 @@ SOURCEFILES	:= \
 	code/server/sv_net_chan.c \
 	code/server/sv_snapshot.c \
 	code/server/sv_world.c \
+	code/server/sv_ref.c \
 	\
 	code/qcommon/q_math.c \
 	code/qcommon/q_shared.c \
+	\
+	code/cgame/ \
 	\
 	code/qcommon/unzip.c \
 	code/qcommon/ioapi.c \
@@ -229,6 +249,7 @@ SOURCEFILES	:= \
 	code/botlib/l_script.c \
 	code/botlib/l_struct.c \
 	\
+	code/sdl/sdl_input.c \
 	code/sdl/sdl_snd.c \
 	\
 	code/sys/con_log.c \
@@ -240,6 +261,7 @@ SOURCEFILES	:= \
 	\
 	code/sdl/sdl_gamma.c \
 	code/sdl/sdl_glimp.c \
+	code/sdl/sdl_input_nx.c \
 	\
 	$(GL1_SOURCEFILES)
 
@@ -281,10 +303,10 @@ define DO_REF_STR
 @echo ";" >> $(TOPDIR)/$@
 endef
 
-VERSION		:=	1.36+3.00a
+VERSION		:=	1.36
 DATA		:=	data
 INCLUDES	:=
-DEFINES		+=	-DOPENARENA -DSTANDALONE -DDEFAULT_BASEDIR=\"baseoa\" -DUSE_CURL -DUSE_CODEC_VORBIS -DUSE_CODEC_MP3 -DPRODUCT_VERSION=\"$(VERSION)\" -DARCH_STRING=\"aarch64\" \
+DEFINES		+=	-DUSE_CURL -DUSE_CODEC_VORBIS -DUSE_CODEC_MP3 -DPRODUCT_VERSION=\"$(VERSION)\" -DARCH_STRING=\"aarch64\" \
 				-DBOTLIB -DNO_VM_COMPILED -DUSE_OPENAL
 EXEFS_SRC	:=	exefs_src
 #ROMFS	:=	romfs
@@ -306,7 +328,7 @@ CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11
 ASFLAGS	:=	-g $(ARCH)
 LDFLAGS	=	-specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 
-LIBS	:=	-lopenal -lSDL2main -lSDL2 -lEGL -lglapi -ldrm_nouveau -lglad -lglfw3 \
+LIBS	:=	-lopenal -lSDL2main -lSDL2 -lEGL -lglapi -ldrm_nouveau -lglad \
 		-lvorbisfile -lvorbis -lmad -logg -ljpeg -lcurl -lmbedtls -lmbedx509 -lmbedcrypto -lz -lnx -lm -lstdc++
 
 #---------------------------------------------------------------------------------

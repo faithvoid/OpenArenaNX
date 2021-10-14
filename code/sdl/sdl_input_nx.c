@@ -46,6 +46,16 @@ static qboolean mouseActive = qfalse;
 static cvar_t *in_mouse             = NULL;
 static cvar_t *in_nograb;
 
+static cvar_t *in_gyromouse          = NULL;
+static cvar_t *in_gyromouse_pitch    = NULL; // Negative values invert
+static cvar_t *in_gyromouse_yaw      = NULL; // Negative values invert
+static cvar_t *in_gyromouse_pitch_ui = NULL; // Negative values invert (in-menu)
+static cvar_t *in_gyromouse_yaw_ui   = NULL; // Negative values invert (in-menu)
+static cvar_t *in_gyromouse_yaw_axis     = NULL; // 0 = .y is yaw, 1 = .z is yaw
+static cvar_t *in_gyromouse_debug    = NULL;
+static HidSixAxisSensorHandle sixaxis_handles[4];
+static PadState pad;
+
 static cvar_t *in_joystick          = NULL;
 static cvar_t *in_joystickThreshold = NULL;
 static cvar_t *in_joystickNo        = NULL;
@@ -259,22 +269,15 @@ static keyNum_t IN_TranslateSDLToQ3Key( SDL_Keysym *keysym, qboolean down )
 			case SDLK_PAUSE:        key = K_PAUSE;         break;
 
 			case SDLK_LSHIFT:
-			case SDLK_RSHIFT:       key = K_SHIFT;         break;
+			case SDLK_RSHIFT:       key = P_LSHIFT;         break;
 
 			case SDLK_LCTRL:
-			case SDLK_RCTRL:        key = K_CTRL;          break;
+			case SDLK_RCTRL:        key = CTRL;          break;
 
 #ifdef __APPLE__
 			case SDLK_RGUI:
 			case SDLK_LGUI:         key = K_COMMAND;       break;
-#else
-			case SDLK_RGUI:
-			case SDLK_LGUI:         key = K_SUPER;         break;
 #endif
-
-			case SDLK_RALT:
-			case SDLK_LALT:         key = K_ALT;           break;
-
 			case SDLK_KP_5:         key = K_KP_5;          break;
 			case SDLK_INSERT:       key = K_INS;           break;
 			case SDLK_KP_0:         key = K_KP_INS;        break;
@@ -695,7 +698,7 @@ static void IN_GamepadMove( void )
 		qboolean pressed = SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_A + i);
 		if (pressed != stick_state.buttons[i])
 		{
-			Com_QueueEvent(in_eventTime, SE_KEY, K_PAD0_A + i, pressed, 0, NULL);
+			Com_QueueEvent(in_eventTime, SE_KEY, K_4JOY_A + i, pressed, 0, NULL);
 			stick_state.buttons[i] = pressed;
 			changed[i] = qtrue;
 		}
@@ -728,8 +731,8 @@ static void IN_GamepadMove( void )
 
 		if (axis != oldAxis)
 		{
-			const int negMap[SDL_CONTROLLER_AXIS_MAX] = { K_PAD0_LEFTSTICK_LEFT,  K_PAD0_LEFTSTICK_UP,   K_PAD0_RIGHTSTICK_LEFT,  K_PAD0_RIGHTSTICK_UP, 0, 0 };
-			const int posMap[SDL_CONTROLLER_AXIS_MAX] = { K_PAD0_LEFTSTICK_RIGHT, K_PAD0_LEFTSTICK_DOWN, K_PAD0_RIGHTSTICK_RIGHT, K_PAD0_RIGHTSTICK_DOWN, K_PAD0_LEFTTRIGGER, K_PAD0_RIGHTTRIGGER };
+			const int negMap[SDL_CONTROLLER_AXIS_MAX] = { K_4JOY_LEFTSTICK_LEFT,  K_4JOY_LEFTSTICK_UP,   K_4JOY_RIGHTSTICK_LEFT,  K_4JOY_RIGHTSTICK_UP, 0, 0 };
+			const int posMap[SDL_CONTROLLER_AXIS_MAX] = { K_4JOY_LEFTSTICK_RIGHT, K_4JOY_LEFTSTICK_DOWN, K_4JOY_RIGHTSTICK_RIGHT, K_4JOY_RIGHTSTICK_DOWN, K_4JOY_LEFTTRIGGER, K_4JOY_RIGHTTRIGGER };
 
 			qboolean posAnalog = qfalse, negAnalog = qfalse;
 			int negKey = negMap[i];
@@ -1261,6 +1264,18 @@ static void IN_ProcessEvents( void )
 							Cvar_SetValue( "r_customheight", height );
 							Cvar_Set( "r_mode", "-1" );
 
+							// WIP Quick and dirty yaw axis fix.
+
+							if (HidNpadIdType_Handheld)
+							{
+							Cvar_Set( "in_gyromouse_yaw_axis", "0" );
+						}
+						else
+						{
+							Cvar_Set( "in_gyromouse_yaw_axis", "1" );
+						}
+
+
 							// Wait until user stops dragging for 1 second, so
 							// we aren't constantly recreating the GL context while
 							// he tries to drag...
@@ -1282,6 +1297,94 @@ static void IN_ProcessEvents( void )
 	}
 }
 
+/*
+===============
+IN_InitGyro
+===============
+*/
+void IN_InitGyro( void )
+{
+
+padConfigureInput(1, HidNpadStyleSet_NpadStandard);
+padInitializeDefault(&pad);
+
+hidGetSixAxisSensorHandles(&sixaxis_handles[0], 1, HidNpadIdType_Handheld, HidNpadStyleTag_NpadHandheld);
+hidGetSixAxisSensorHandles(&sixaxis_handles[1], 1, HidNpadIdType_No1,      HidNpadStyleTag_NpadFullKey);
+hidGetSixAxisSensorHandles(&sixaxis_handles[2], 2, HidNpadIdType_No1,      HidNpadStyleTag_NpadJoyDual);
+hidStartSixAxisSensor(sixaxis_handles[0]);
+hidStartSixAxisSensor(sixaxis_handles[1]);
+hidStartSixAxisSensor(sixaxis_handles[2]);
+hidStartSixAxisSensor(sixaxis_handles[3]);
+}
+
+
+/*
+===============
+IN_ProcessGyro
+===============
+*/
+void IN_ProcessGyro( void )
+{
+	padUpdate(&pad);
+  if( in_gyromouse->integer ) {
+		HidSixAxisSensorState sixaxis = { 0 };
+				const u64 style_set = padGetStyleSet(&pad);
+				const u64 attrib = padGetAttributes(&pad);
+				if (style_set & HidNpadStyleTag_NpadHandheld)
+				hidGetSixAxisSensorStates(sixaxis_handles[0], &sixaxis, 1);
+				else if (style_set & HidNpadStyleTag_NpadFullKey)
+				hidGetSixAxisSensorStates(sixaxis_handles[1], &sixaxis, 1);
+				else if (style_set & HidNpadStyleTag_NpadJoyDual)
+				// For JoyDual, read from either the Left or Right Joy-Con depending on which is/are connected
+//            if (attrib & HidNpadAttribute_IsLeftConnected)
+//                hidGetSixAxisSensorStates(sixaxis_handles[2], &sixaxis, 1);
+            if (attrib & HidNpadAttribute_IsRightConnected)
+                hidGetSixAxisSensorStates(sixaxis_handles[3], &sixaxis, 1);
+								// Test for dual controllers.
+								if (attrib & HidNpadJoyAssignmentMode_Dual)
+		                hidGetSixAxisSensorStates(sixaxis_handles[2,3], &sixaxis, 1);
+
+
+
+    if ( in_gyromouse_debug->integer ) {
+			Com_Printf("Acceleration:     x=% .4f, y=% .4f, z=% .4f\n", sixaxis.acceleration.x, sixaxis.acceleration.y, sixaxis.acceleration.z);
+			Com_Printf("Angular velocity: x=% .4f, y=% .4f, z=% .4f\n", sixaxis.angular_velocity.x, sixaxis.angular_velocity.y, sixaxis.angular_velocity.z);
+			Com_Printf("Angle:            x=% .4f, y=% .4f, z=% .4f\n", sixaxis.angle.x, sixaxis.angle.y, sixaxis.angle.z);
+			Com_Printf("Direction matrix:\n"
+						 "                  [ % .4f,   % .4f,   % .4f ]\n"
+						 "                  [ % .4f,   % .4f,   % .4f ]\n"
+						 "                  [ % .4f,   % .4f,   % .4f ]\n",
+						 sixaxis.direction.direction[0][0], sixaxis.direction.direction[1][0], sixaxis.direction.direction[2][0],
+             sixaxis.direction.direction[0][1], sixaxis.direction.direction[1][1], sixaxis.direction.direction[2][1],
+             sixaxis.direction.direction[0][2], sixaxis.direction.direction[1][2], sixaxis.direction.direction[2][2]);
+    }
+
+    float pitch = sixaxis.angular_velocity.x;
+    float yaw = in_gyromouse_yaw_axis->integer ? sixaxis.angular_velocity.z : sixaxis.angular_velocity.y;
+    if( clc.state == CA_DISCONNECTED || clc.state == CA_CINEMATIC || ( Key_GetCatcher( ) & KEYCATCH_UI ) ) {
+      pitch *= in_gyromouse_pitch_ui->value;
+      yaw *= in_gyromouse_yaw_ui->value;
+    } else {
+      pitch *= in_gyromouse_pitch->value;
+      yaw *= in_gyromouse_yaw->value;
+    }
+
+    Com_QueueEvent( in_eventTime, SE_MOUSE, yaw, pitch, 0, NULL );
+  }
+}
+
+/*
+===============
+IN_ShutdownGyro
+===============
+*/
+void IN_ShutdownGyro( void )
+{
+	hidStopSixAxisSensor(sixaxis_handles[0]);
+	hidStopSixAxisSensor(sixaxis_handles[1]);
+	hidStopSixAxisSensor(sixaxis_handles[2]);
+	hidStopSixAxisSensor(sixaxis_handles[3]);
+}
 
 /*
 ===============
@@ -1319,6 +1422,8 @@ void IN_Frame( void )
 		IN_ActivateMouse( cls.glconfig.isFullscreen );
 
 	IN_ProcessEvents( );
+
+	IN_ProcessGyro( );
 
 	// Set event time for next frame to earliest possible time an event could happen
 	in_eventTime = Sys_Milliseconds( );
@@ -1359,6 +1464,14 @@ void IN_Init( void *windowData )
 	in_mouse = Cvar_Get( "in_mouse", "1", CVAR_ARCHIVE );
 	in_nograb = Cvar_Get( "in_nograb", "0", CVAR_ARCHIVE );
 
+	in_gyromouse = Cvar_Get( "in_gyromouse", "0", CVAR_ARCHIVE );
+	in_gyromouse_debug = Cvar_Get( "in_gyromouse_debug", "0", CVAR_ARCHIVE );
+	in_gyromouse_yaw_axis = Cvar_Get( "in_gyromouse_yaw_axis", "0", CVAR_ARCHIVE );
+	in_gyromouse_pitch = Cvar_Get( "in_gyromouse_pitch", "-10.0", CVAR_ARCHIVE );
+	in_gyromouse_yaw = Cvar_Get( "in_gyromouse_yaw", "-20.0", CVAR_ARCHIVE );
+	in_gyromouse_pitch_ui = Cvar_Get( "in_gyromouse_pitch_ui", "0.0", CVAR_ARCHIVE );
+	in_gyromouse_yaw_ui = Cvar_Get( "in_gyromouse_yaw_ui", "0.0", CVAR_ARCHIVE );
+
 	in_joystick = Cvar_Get( "in_joystick", "1", CVAR_ARCHIVE|CVAR_LATCH );
 	in_joystickThreshold = Cvar_Get( "joy_threshold", "0.15", CVAR_ARCHIVE );
 
@@ -1370,6 +1483,8 @@ void IN_Init( void *windowData )
 	Cvar_SetValue( "com_minimized", appState & SDL_WINDOW_MINIMIZED );
 
 	IN_InitJoystick( );
+
+	IN_InitGyro( );
 
 	IN_InitKeys( );
 
@@ -1389,6 +1504,8 @@ void IN_Shutdown( void )
 	mouseAvailable = qfalse;
 
 	IN_ShutdownJoystick( );
+
+	IN_ShutdownGyro( );
 
 	SDL_window = NULL;
 }

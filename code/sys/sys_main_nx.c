@@ -512,7 +512,7 @@ void *Sys_LoadDll(const char *name, qboolean useSystemLib)
 		Com_Printf("Trying to load \"%s\"...\n", name);
 		dllhandle = Sys_LoadLibrary(name);
 	}
-	
+
 	if(!dllhandle)
 	{
 		const char *topDir;
@@ -538,10 +538,10 @@ void *Sys_LoadDll(const char *name, qboolean useSystemLib)
 		if(!dllhandle)
 		{
 			const char *basePath = Cvar_VariableString("fs_basepath");
-			
+
 			if(!basePath || !*basePath)
 				basePath = ".";
-			
+
 			if(FS_FilenameCompare(topDir, basePath))
 			{
 				len = Com_sprintf(libPath, sizeof(libPath), "%s%c%s", basePath, PATH_SEP, name);
@@ -555,12 +555,12 @@ void *Sys_LoadDll(const char *name, qboolean useSystemLib)
 					Com_Printf("Skipping trying to load \"%s\" from \"%s\", file name is too long.\n", name, basePath);
 				}
 			}
-			
+
 			if(!dllhandle)
 				Com_Printf("Loading \"%s\" failed\n", name);
 		}
 	}
-	
+
 	return dllhandle;
 }
 
@@ -669,6 +669,83 @@ void Sys_SigHandler( int signal )
 }
 
 /*
+==================
+Sys_Rmdir
+==================
+*/
+qboolean Sys_Rmdir( const char *path )
+{
+	int result = rmdir( path );
+
+	if( result != 0 )
+		return qfalse;
+
+	return qtrue;
+}
+
+/*
+===============
+Sys_GetCapsLockMode
+===============
+*/
+qboolean Sys_GetCapsLockMode( void ) {
+#ifdef WIN32
+	// ZTM: TODO: SDL does not track Windows num/caps lock state. Remove this after it's fixed by a major SDL version? (i.e., SDL 2.1)
+	return ( GetKeyState( VK_CAPITAL ) & 0x0001 ) ? qtrue : qfalse;
+#else
+	return ( SDL_GetModState() & KMOD_CAPS ) ? qtrue : qfalse;
+#endif
+}
+
+/*
+===============
+Sys_GetNumLockMode
+===============
+*/
+qboolean Sys_GetNumLockMode( void ) {
+#ifdef WIN32
+	// ZTM: TODO: SDL does not track Windows num/caps lock state. Remove this after it's fixed by a major SDL version? (i.e., SDL 2.1)
+	return ( GetKeyState( VK_NUMLOCK ) & 0x0001 ) ? qtrue : qfalse;
+#else
+	return ( SDL_GetModState() & KMOD_NUM ) ? qtrue : qfalse;
+#endif
+}
+
+/*
+==============
+Sys_StatFile
+Test a file given OS path:
+returns -1 if not found
+returns 1 if directory
+returns 0 otherwise
+==============
+*/
+int Sys_StatFile( char *ospath ) {
+	struct stat stat_buf;
+	if ( stat( ospath, &stat_buf ) == -1 ) {
+		return -1;
+	}
+	if ( S_ISDIR( stat_buf.st_mode ) ) {
+		return 1;
+	}
+	return 0;
+}
+
+/*
+=================
+Sys_PathIsAbsolute
+Check if filename is an absolute path.
+=================
+*/
+qboolean Sys_PathIsAbsolute( const char *path ) {
+	if ( !path ) {
+		return qfalse;
+	}
+
+	return ( path[0] == '/' );
+}
+
+/*
 =================
 main
 =================
@@ -752,4 +829,3 @@ int main( int argc, char **argv )
 
 	return 0;
 }
-

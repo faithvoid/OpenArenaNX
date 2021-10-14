@@ -48,3 +48,12 @@ Q3ArenaNX.pfs0
 code/qcommon/bak/net_ip.c
 code/sdl/bak/sdl_glimp.c
 OpenArenaNX.nacp
+Q3ArenaNXSpearmint.elf
+Q3ArenaNXSpearmint.nacp
+Q3ArenaNXSpearmint.nro
+Q3ArenaNXSpearmint.nso
+Q3ArenaNXSpearmint.pfs0
+code/sys/bak/sys_win32.c
+code/sys/bak/sys_unix.c
+code/sys/bak/sys_osx.m
+code/sys/bak/con_tty.c
