@@ -42,7 +42,8 @@ Gyro controls can be enabled from the controls section of the settings menu.
 
 ## **TODO**
 - Diagnose sleep issue.
-- Implement splitscreen multiplayer (probably via switching to the Spearmint engine which requires a renderer/controller code overhaul at minimum.)
+- Implement Switch-specific menu settings in both main menu and pause screens.
+- Implement splitscreen multiplayer (probably via switching to the Spearmint engine which requires a renderer/controller code overhaul at minimum, current broken code can be found in the spearmint branch.)
 
 ## **Credits**
 - ioquake3 team (engine)
