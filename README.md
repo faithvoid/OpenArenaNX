@@ -7,9 +7,8 @@ A port of ioquake3 + OpenArena for the Nintendo Switch. Compatible with both con
 It does, and this project uses some of it's code! But the releases requires a copy of baseq3 (which is non-free) to launch, so this fork tweaks a few variables to launch OpenArena (a free clone) as a standalone game. Also, this project aims to fix a few issues that build has, and eventually implement local splitscreen co-op via the Spearmint engine.
 
 ## **Installation**
-- Latest full build including game files can be downloaded and copied from <a href="https://accela.design/downloads/switch-homebrew/OpenArenaNX.zip">here!<br/></a>
 - Copy release files to /switch/ folder
-- If providing your own baseoa files, copy baseoa from a copy of OpenArena, making sure not to replace any files.
+- Copy the baseoa folder from a copy of OpenArena, making sure not to replace any files.
 - Launch via HBMenu (by pressing R, not album!)
 - Start fragging!
 
