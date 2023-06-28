@@ -5,9 +5,8 @@ A port of ioquake3 for the Nintendo Switch. Compatible with both controllers (in
 It does, and this project uses some of it's code! But this project aims to fix a few issues that build has, keep it updated, and eventually implement local splitscreen co-op.
 
 ## **Installation**
-- Latest stable full build including demo game files can be downloaded and copied from <a href="https://accela.design/downloads/switch-homebrew/Q3ArenaNXDemo.zip">here!<br/></a>
 - Copy release files to /switch/ folder
-- Copy baseq3 files from an existing installation of Quake III Arena into the same folder as the .nro if you're not using the download above, making sure not to replace any files.
+- Copy the baseq3 folder from a copy of Quake III Arena, making sure not to replace any files.
 - Launch via HBMenu (by pressing R, not album!)
 - Start fragging!
 
