@@ -10,25 +10,8 @@ TOPDIR ?= $(CURDIR)
 include $(DEVKITPRO)/libnx/switch_rules
 
 #---------------------------------------------------------------------------------
-# TARGET is the name of the output
-# BUILD is the directory where object files & intermediate files will be placed
-# SOURCES is a list of directories containing source code
-# DATA is a list of directories containing data files
-# INCLUDES is a list of directories containing header files
-# EXEFS_SRC is the optional input directory containing data copied into exefs, if anything this normally should only contain "main.npdm".
-# ROMFS is the directory containing data to be added to RomFS, relative to the Makefile (Optional)
-#
-# NO_ICON: if set to anything, do not use icon.
-# NO_NACP: if set to anything, no .nacp file is generated.
-# APP_TITLE is the name of the app stored in the .nacp file (Optional)
-# APP_AUTHOR is the author of the app stored in the .nacp file (Optional)
-# APP_VERSION is the version of the app stored in the .nacp file (Optional)
-# APP_TITLEID is the titleID of the app stored in the .nacp file (Optional)
-# ICON is the filename of the icon (.jpg), relative to the project folder.
-#   If not set, it attempts to use one of the following (in this order):
-#     - <Project name>.jpg
-#     - icon.jpg
-#     - <libnx folder>/default_icon.jpg
+# devkitPro template vars (TARGET, BUILD, SOURCES, DATA, INCLUDES, EXEFS_SRC, ROMFS, NO_ICON, NO_NACP).
+# APP_* fill the .nacp; ICON (.jpg) falls back to <TARGET>.jpg, icon.jpg, then the libnx default.
 #---------------------------------------------------------------------------------
 APP_TITLE	:=	OpenArenaNX
 APP_AUTHOR	:=	faithvoid
@@ -318,6 +301,19 @@ LDFLAGS	=	-specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*
 
 LIBS	:=	-lopenal -lSDL2main -lSDL2 -lEGL -lglapi -ldrm_nouveau -lglad \
 		-lvorbisfile -lvorbis -lmad -logg -ljpeg -lcurl -lmbedtls -lmbedx509 -lmbedcrypto -lz -lnx -lm -lstdc++
+
+# Exit-crash diagnostic build: make -f Makefile.nx NX_EXIT_LOG=1 (run clean first).
+# Wraps the shutdown calls and mirrors the console to sdmc:/OpenArenaNX_exit.log.
+ifeq ($(NX_EXIT_LOG),1)
+SOURCEFILES	+=	code/sys/sys_exitlog_nx.c
+EXITLOG_WRAPS	:=	Sys_Print Com_Frame appletMainLoop Cbuf_ExecuteText Sys_Quit \
+			SV_Shutdown CL_Shutdown FS_Shutdown CL_cURL_Shutdown S_DisableSounds \
+			CL_ShutdownCGame CL_ShutdownUI GLimp_Shutdown IN_Shutdown hidStopSixAxisSensor \
+			Hunk_Clear CM_ClearMap S_Shutdown S_CodecShutdown alcDestroyContext alcCloseDevice \
+			CL_ShutdownInput Con_Shutdown CON_Shutdown SDL_Quit SDL_QuitSubSystem \
+			NET_Shutdown Sys_PlatformExit socketExit appletUnlockExit exit
+LDFLAGS	+=	$(foreach f,$(EXITLOG_WRAPS),-Wl,--wrap=$(f))
+endif
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing

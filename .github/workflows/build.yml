@@ -1,49 +1,31 @@
-name: Build
-on: [push, pull_request]
+name: Build Switch NRO
+
+on: [ push, pull_request, workflow_dispatch ]
 
 jobs:
-  linux:
-    name: Linux
-    runs-on: ubuntu-18.04
+  build_nro:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkita64:latest
     steps:
-    - uses: actions/checkout@v2
-    - name: Install Dependencies
+
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
       run: |
-        sudo apt-get update
-        sudo apt-get install libsdl2-dev
-    - name: Compile
-      run: make release
-      env:
-        ARCHIVE: 1
-    - uses: actions/upload-artifact@v2
-      with:
-        name: Linux
-        path: build/*.zip
-  windows:
-    name: Windows
-    runs-on: windows-2019
-    steps:
-    - uses: actions/checkout@v2
-    - name: Compile
+        dkp-pacman -Syu --noconfirm --needed switch-sdl2 switch-openal-soft switch-mesa switch-libdrm_nouveau switch-glad switch-libvorbis switch-libogg switch-libmad switch-libjpeg-turbo switch-curl switch-mbedtls switch-zlib
+
+    - name: Get short SHA
+      id: slug
       run: |
-        choco install zip
-        make release
-      env:
-        ARCHIVE: 1
-    - uses: actions/upload-artifact@v2
+        printf '%s\n' "sha8=$(printf '%s\n' ${GITHUB_SHA} | cut -c1-8)" >> $GITHUB_OUTPUT
+
+    - name: Build OpenArenaNX
+      run: make -f Makefile.nx -j$(nproc)
+
+    - name: Push NRO artifact
+      uses: actions/upload-artifact@v4
       with:
-        name: Windows
-        path: build/*.zip
-  macos:
-    name: macOS
-    runs-on: macos-10.15
-    steps:
-    - uses: actions/checkout@v2
-    - name: Compile
-      run: make release
-      env:
-        ARCHIVE: 1
-    - uses: actions/upload-artifact@v2
-      with:
-        name: macOS
-        path: build/*.zip
+        name: openarenanx-build_${{ steps.slug.outputs.sha8 }}
+        path: OpenArenaNX.nro
+        if-no-files-found: error

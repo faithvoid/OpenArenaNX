@@ -30,6 +30,9 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#ifdef __SWITCH__
+#include <switch.h>
+#endif
 
 #include "../renderercommon/tr_common.h"
 #include "../sys/sys_local.h"
@@ -426,6 +429,21 @@ static int GLimp_SetMode(int mode, qboolean fullscreen, qboolean noborder, qbool
 
 	ri.Printf (PRINT_ALL, "...setting mode %d:", mode );
 
+#ifdef __SWITCH__
+	// Match a Switch display mode: the fullscreen toggle in GLimp_EndFrame resizes the
+	// surface to the closest one, so a smaller r_mode only fills a corner of it.
+	if ( appletGetOperationMode() == AppletOperationMode_Handheld )
+	{
+		glConfig.vidWidth = 1280;
+		glConfig.vidHeight = 720;
+	}
+	else
+	{
+		glConfig.vidWidth = 1920;
+		glConfig.vidHeight = 1080;
+	}
+	glConfig.windowAspect = (float)glConfig.vidWidth / (float)glConfig.vidHeight;
+#else
 	if (mode == -2)
 	{
 		// use desktop video resolution
@@ -449,6 +467,7 @@ static int GLimp_SetMode(int mode, qboolean fullscreen, qboolean noborder, qbool
 		ri.Printf( PRINT_ALL, " invalid mode\n" );
 		return RSERR_INVALID_MODE;
 	}
+#endif
 	ri.Printf( PRINT_ALL, " %d %d\n", glConfig.vidWidth, glConfig.vidHeight);
 
 	// Center window

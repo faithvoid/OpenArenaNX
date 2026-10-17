@@ -462,8 +462,6 @@ IN_InitKeyMaps
 */
 static void IN_InitKeys( void )
 {
-	SDL_StartTextInput( );
-
 	int i;
 	for (i = 0; i < K_LAST_KEY; i++)
 		keyboardShiftMap[i] = i;
