@@ -1,31 +1,47 @@
-name: Build Switch NRO
+name: Build Switch 1 & 2 NROs
 
 on: [ push, pull_request, workflow_dispatch ]
 
 jobs:
-  build_nro:
+  build_nros:
     runs-on: ubuntu-latest
     container: devkitpro/devkita64:latest
     steps:
 
-    - name: Checkout
+    - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Install dependencies
+    - name: Install dependencies & git
       run: |
-        dkp-pacman -Syu --noconfirm --needed switch-sdl2 switch-openal-soft switch-mesa switch-libdrm_nouveau switch-glad switch-libvorbis switch-libogg switch-libmad switch-libjpeg-turbo switch-curl switch-mbedtls switch-zlib
+        dkp-pacman -Syu --noconfirm --needed switch-sdl2 switch-openal-soft switch-mesa switch-libdrm_nouveau switch-glad switch-libvorbis switch-libogg switch-libmad switch-libjpeg-turbo switch-curl switch-mbedtls switch-zlib git
+
+    - name: Install Ounce SDK
+      run: |
+        git clone https://github.com/ouncebrew/ounce-devkit.git /tmp/ounce-devkit
+        cd /tmp/ounce-devkit
+        sh install.sh
 
     - name: Get short SHA
       id: slug
       run: |
         printf '%s\n' "sha8=$(printf '%s\n' ${GITHUB_SHA} | cut -c1-8)" >> $GITHUB_OUTPUT
 
-    - name: Build OpenArenaNX
+    - name: Build OpenArenaNX (Switch 1)
       run: make -f Makefile.nx -j$(nproc)
 
-    - name: Push NRO artifact
+    - name: Build OpenArenaNX (Switch 2)
+      run: make -f Makefile.nx2 -j$(nproc)
+
+    - name: Push Switch 1 NRO artifact
       uses: actions/upload-artifact@v4
       with:
-        name: openarenanx-build_${{ steps.slug.outputs.sha8 }}
+        name: openarenanx-switch1_${{ steps.slug.outputs.sha8 }}
         path: OpenArenaNX.nro
+        if-no-files-found: error
+
+    - name: Push Switch 2 NRO artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: openarenanx-switch2_${{ steps.slug.outputs.sha8 }}
+        path: OpenArenaNX_Switch2.nro
         if-no-files-found: error
